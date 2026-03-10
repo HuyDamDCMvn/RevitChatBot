@@ -23,4 +23,5 @@ public static class BridgeMessageTypes
     public const string ConfirmationResponse = "confirmation_response";
     public const string ClarificationRequest = "clarification_request";
     public const string ClarificationResponse = "clarification_response";
+    public const string PartialIntent = "partial_intent";
 }

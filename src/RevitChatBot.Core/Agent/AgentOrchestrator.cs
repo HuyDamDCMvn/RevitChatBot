@@ -9,12 +9,17 @@ namespace RevitChatBot.Core.Agent;
 
 /// <summary>
 /// Implements a ReAct (Reasoning + Acting) agent pattern for multi-step task execution.
-/// The agent iterates through Thought -> Action -> Observation cycles until it reaches an answer.
-/// Supports confirmation flow for destructive actions (create/modify/delete).
-/// Integrates with MemoryManager for cross-session learning and context persistence.
-/// Integrates with CodeGenLibrary + DynamicSkillRegistry + CodePatternLearning for self-evolving skills.
-/// Integrates with QueryPreprocessor + AdaptivePromptBuilder + SemanticSkillRouter + ClarificationFlow
-/// for intelligent query understanding and optimized prompting.
+/// Integrates all LLM intelligence modules:
+///   - ConversationQueryRewriter (P0)
+///   - ContextWindowOptimizer (P0)
+///   - SmartHistoryPruner (P1)
+///   - MultiIntentDecomposer (P1)
+///   - AdaptiveFewShotLearning (P1)
+///   - DynamicGlossary (P2)
+///   - SkillSuccessFeedback (P2)
+///   - PromptCache (P2)
+///   - ResponseQualityValidator (P2)
+///   - StreamingIntentDetector (P3) — exposed via ChatSessionV2
 /// </summary>
 public class AgentOrchestrator
 {
@@ -30,9 +35,17 @@ public class AgentOrchestrator
     private readonly QueryPreprocessor? _queryPreprocessor;
     private readonly AdaptivePromptBuilder? _adaptivePromptBuilder;
     private readonly SemanticSkillRouter? _skillRouter;
+    private readonly ConversationQueryRewriter? _queryRewriter;
+    private readonly ContextWindowOptimizer? _contextOptimizer;
+    private readonly MultiIntentDecomposer? _intentDecomposer;
+    private readonly AdaptiveFewShotLearning? _fewShotLearning;
+    private readonly DynamicGlossary? _dynamicGlossary;
+    private readonly SkillSuccessFeedback? _skillFeedback;
+    private readonly PromptCache? _promptCache;
     private readonly List<ChatMessage> _history = [];
 
     private const int MaxReActSteps = 8;
+    private const int MaxRetryOnLowQuality = 1;
 
     private static readonly HashSet<string> DestructiveSkills =
     [
@@ -65,7 +78,14 @@ public class AgentOrchestrator
         CodePatternLearning? patternLearning = null,
         QueryPreprocessor? queryPreprocessor = null,
         AdaptivePromptBuilder? adaptivePromptBuilder = null,
-        SemanticSkillRouter? skillRouter = null)
+        SemanticSkillRouter? skillRouter = null,
+        ConversationQueryRewriter? queryRewriter = null,
+        ContextWindowOptimizer? contextOptimizer = null,
+        MultiIntentDecomposer? intentDecomposer = null,
+        AdaptiveFewShotLearning? fewShotLearning = null,
+        DynamicGlossary? dynamicGlossary = null,
+        SkillSuccessFeedback? skillFeedback = null,
+        PromptCache? promptCache = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -79,6 +99,13 @@ public class AgentOrchestrator
         _queryPreprocessor = queryPreprocessor;
         _adaptivePromptBuilder = adaptivePromptBuilder;
         _skillRouter = skillRouter;
+        _queryRewriter = queryRewriter;
+        _contextOptimizer = contextOptimizer;
+        _intentDecomposer = intentDecomposer;
+        _fewShotLearning = fewShotLearning;
+        _dynamicGlossary = dynamicGlossary;
+        _skillFeedback = skillFeedback;
+        _promptCache = promptCache;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -87,11 +114,27 @@ public class AgentOrchestrator
     {
         var plan = new AgentPlan { Goal = userMessage };
 
+        // --- Phase 0: Query Rewriting (resolve pronouns, short follow-ups) ---
+        var effectiveQuery = userMessage;
+        if (_queryRewriter != null)
+        {
+            try
+            {
+                effectiveQuery = await _queryRewriter.RewriteAsync(
+                    userMessage, _history, cancellationToken);
+            }
+            catch { effectiveQuery = userMessage; }
+        }
+
+        // --- Phase 0.5: Dynamic Glossary normalization ---
+        if (_dynamicGlossary != null)
+            effectiveQuery = _dynamicGlossary.NormalizeQuery(effectiveQuery);
+
         // --- Phase 1: Query Preprocessing ---
         QueryAnalysis? analysis = null;
         if (_queryPreprocessor != null)
         {
-            analysis = _queryPreprocessor.AnalyzeFast(userMessage);
+            analysis = _queryPreprocessor.AnalyzeFast(effectiveQuery);
 
             var clarification = ClarificationFlow.CheckNeedsClarification(analysis);
             if (clarification is { NeedsClarification: true })
@@ -113,10 +156,22 @@ public class AgentOrchestrator
             {
                 try
                 {
-                    analysis = await _queryPreprocessor.AnalyzeDeepAsync(userMessage, cancellationToken);
+                    analysis = await _queryPreprocessor.AnalyzeDeepAsync(effectiveQuery, cancellationToken);
                 }
                 catch { /* keep fast analysis */ }
             }
+        }
+
+        // --- Phase 1.5: Multi-Intent Decomposition ---
+        List<string>? subQueries = null;
+        if (_intentDecomposer != null && MultiIntentDecomposer.HasMultipleIntents(effectiveQuery))
+        {
+            try
+            {
+                subQueries = await _intentDecomposer.DecomposeAsync(effectiveQuery, cancellationToken);
+                if (subQueries.Count <= 1) subQueries = null;
+            }
+            catch { subQueries = null; }
         }
 
         var userMsg = ChatMessage.FromUser(userMessage);
@@ -131,33 +186,50 @@ public class AgentOrchestrator
         if (_skillRouter != null && analysis != null)
         {
             filteredSkills = await _skillRouter.RouteAsync(
-                userMessage, analysis, allSkills, 12, cancellationToken);
+                effectiveQuery, analysis, allSkills, 12, cancellationToken);
         }
         else
         {
             filteredSkills = allSkills;
         }
 
+        if (_skillFeedback != null && analysis != null)
+            filteredSkills = _skillFeedback.ApplyFeedback(filteredSkills, analysis);
+
         var toolDefs = _adaptivePromptBuilder?.BuildToolDefinitions(filteredSkills)
             ?? _promptBuilder.BuildToolDefinitions(filteredSkills);
 
-        // --- Phase 3: Adaptive Prompt Building ---
-        var systemPrompt = BuildReActSystemPrompt();
+        // --- Phase 3: Build Messages ---
+        var basePrompt = BuildReActSystemPrompt();
+        var systemPrompt = _contextOptimizer != null && analysis != null
+            ? _contextOptimizer.OptimizeSystemPrompt(basePrompt, analysis.Intent)
+            : basePrompt;
+
         var messages = new List<ChatMessage> { ChatMessage.FromSystem(systemPrompt) };
 
         if (_adaptivePromptBuilder != null && analysis != null)
         {
             var analysisHint = $"--- QUERY UNDERSTANDING ---\n{analysis.GetPromptHint()}\n";
-            var examples = FewShotIntentLibrary.GetRelevantExamples(analysis, 4);
-            var fewShotBlock = FewShotIntentLibrary.FormatExamplesForPrompt(examples);
+
+            var learnedExamples = _fewShotLearning?.GetLearnedExamples(analysis, 2) ?? [];
+            var staticExamples = FewShotIntentLibrary.GetRelevantExamples(analysis, 3);
+            var allExamples = learnedExamples.Concat(staticExamples).Take(5).ToList();
+            var fewShotBlock = FewShotIntentLibrary.FormatExamplesForPrompt(allExamples);
             if (!string.IsNullOrEmpty(fewShotBlock))
                 analysisHint += $"\n{fewShotBlock}\n";
+
             messages.Add(ChatMessage.FromSystem(analysisHint));
         }
 
         var codeGenContext = BuildCodeGenContext();
         if (!string.IsNullOrWhiteSpace(codeGenContext))
             messages.Add(ChatMessage.FromSystem(codeGenContext));
+
+        if (_contextOptimizer != null && analysis != null)
+        {
+            int currentTokens = messages.Sum(m => ContextWindowOptimizer.EstimateTokens(m.Content));
+            context = _contextOptimizer.OptimizeContext(context, analysis.Intent, currentTokens);
+        }
 
         if (context.Entries.Count > 0)
         {
@@ -167,20 +239,72 @@ public class AgentOrchestrator
             messages.Add(ChatMessage.FromSystem(contextContent));
         }
 
-        messages.AddRange(_history);
+        // --- Phase 3.5: Smart History Pruning ---
+        var historyForPrompt = _history;
+        if (_history.Count > 16)
+        {
+            var summary = _memory?.Summarizer?.CurrentSummary;
+            historyForPrompt = SmartHistoryPruner.Prune(_history, summary);
+        }
+        else if (_history.Count > 10)
+        {
+            historyForPrompt = SmartHistoryPruner.RemoveNoise(_history);
+        }
 
+        if (_contextOptimizer != null)
+        {
+            int usedTokens = messages.Sum(m => ContextWindowOptimizer.EstimateTokens(m.Content));
+            int available = 8192 - usedTokens - 1024;
+            historyForPrompt = _contextOptimizer.OptimizeHistory(historyForPrompt, available);
+        }
+
+        messages.AddRange(historyForPrompt);
+
+        // --- Phase 3.6: Multi-Intent — if decomposed, add hint ---
+        if (subQueries is { Count: > 1 })
+        {
+            var hint = "--- MULTI-INTENT DETECTED ---\n" +
+                       "User has multiple requests. Handle them in order:\n" +
+                       string.Join("\n", subQueries.Select((q, i) => $"  {i + 1}. {q}")) +
+                       "\nComplete each before moving to the next.";
+            messages.Insert(messages.Count - historyForPrompt.Count, ChatMessage.FromSystem(hint));
+        }
+
+        // --- Phase 4: ReAct Loop ---
         for (int step = 0; step < MaxReActSteps; step++)
         {
             var response = await _ollama.ChatAsync(messages, toolDefs, cancellationToken);
 
             if (response.ToolCalls is not { Count: > 0 })
             {
+                // --- Phase 4.5: Response Quality Validation ---
+                var finalContent = response.Content;
+                if (analysis != null && step == 0)
+                {
+                    var validation = ResponseQualityValidator.Validate(
+                        response.Content, effectiveQuery, messages, analysis.Language);
+
+                    if (validation.ShouldRetry && MaxRetryOnLowQuality > 0)
+                    {
+                        var retryPrompt = ResponseQualityValidator.BuildRetryPrompt(validation);
+                        messages.Add(response);
+                        messages.Add(ChatMessage.FromSystem(retryPrompt));
+
+                        var retryResponse = await _ollama.ChatAsync(messages, toolDefs, cancellationToken);
+                        if (!string.IsNullOrWhiteSpace(retryResponse.Content))
+                        {
+                            finalContent = retryResponse.Content;
+                            response = retryResponse;
+                        }
+                    }
+                }
+
                 plan.Steps.Add(new AgentStep
                 {
                     Type = AgentStepType.Answer,
-                    Content = response.Content
+                    Content = finalContent
                 });
-                plan.FinalAnswer = response.Content;
+                plan.FinalAnswer = finalContent;
                 plan.IsCompleted = true;
 
                 _history.Add(response);
@@ -250,6 +374,10 @@ public class AgentOrchestrator
 
                 _dynamicSkillRegistry?.RecordUsage(toolCall.FunctionName);
 
+                // Record success for adaptive few-shot learning
+                if (result.Success)
+                    _fewShotLearning?.RecordSuccess(effectiveQuery, toolCall.FunctionName, toolCall.Arguments);
+
                 var toolMessage = ChatMessage.FromTool(toolCall.FunctionName, result.ToJson());
                 messages.Add(toolMessage);
                 _history.Add(toolMessage);
@@ -276,6 +404,10 @@ public class AgentOrchestrator
                 _ = _memory.OnAssistantResponseAsync(userMsg, finalResponse, cancellationToken);
         }
 
+        // --- Phase 5: Post-processing — learn from corrections ---
+        if (_dynamicGlossary != null && plan.FinalAnswer != null)
+            _dynamicGlossary.LearnFromCorrection(userMessage, plan.FinalAnswer);
+
         return plan;
     }
 
@@ -290,7 +422,7 @@ public class AgentOrchestrator
         return await OnConfirmationRequired.Invoke(description);
     }
 
-    private static string BuildReActSystemPrompt()
+    private string BuildReActSystemPrompt()
     {
         var basePrompt = """
             You are an expert MEP (Mechanical, Electrical, Plumbing) engineer working with Autodesk Revit 2025.
@@ -370,13 +502,11 @@ public class AgentOrchestrator
             - domain_filter: hvac/piping/electrical/all to limit traversal scope.
             - Handles MEPCurve, FamilyInstance, and FabricationPart connectors.
             - Skips logical connectors (ConnectorType.Logical) for accurate physical graph.
-            - Typical use: "show me all elements connected to this duct", "trace the piping network".
 
             ## ROUTING PREFERENCES
             - Use 'query_routing_preferences' to inspect preferred fittings for pipe/duct types.
             - Shows: junction type (Tee vs Tap), elbow families, transition families, segment rules.
             - Helpful before creating fittings — ensures the right family is used.
-            - Helpful for QA — verify that routing preferences are configured correctly.
 
             ## CONNECTOR ANALYSIS (for dynamic code / advanced queries)
             - Connector access: MEPCurve.ConnectorManager, FamilyInstance.MEPModel?.ConnectorManager, FabricationPart.ConnectorManager
@@ -448,10 +578,11 @@ public class AgentOrchestrator
             - For destructive actions, explain what you will do first
             """;
 
-        return basePrompt + "\n\n" +
-               RevitApiCheatSheet.GetCheatSheet() + "\n\n" +
-               RevitApiCheatSheet.GetCommonErrorFixes() + "\n\n" +
-               CodeExamplesLibrary.GetExamples();
+        var staticContent = _promptCache != null && _promptCache.IsInitialized
+            ? _promptCache.GetFullStaticPrompt()
+            : $"{RevitApiCheatSheet.GetCheatSheet()}\n\n{RevitApiCheatSheet.GetCommonErrorFixes()}\n\n{CodeExamplesLibrary.GetExamples()}";
+
+        return basePrompt + "\n\n" + staticContent;
     }
 
     private string BuildCodeGenContext()

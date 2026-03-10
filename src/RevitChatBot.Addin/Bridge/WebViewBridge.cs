@@ -33,6 +33,21 @@ public class WebViewBridge : IDisposable
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    private CodeGenLibrary? _codeGenLibrary;
+    private DynamicSkillRegistry? _dynamicSkillRegistry;
+    private CodePatternLearning? _patternLearning;
+    private DynamicCodeExecutor? _codeExecutor;
+    private QueryPreprocessor? _queryPreprocessor;
+    private AdaptivePromptBuilder? _adaptivePromptBuilder;
+    private SemanticSkillRouter? _skillRouter;
+    private ConversationQueryRewriter? _queryRewriter;
+    private ContextWindowOptimizer? _contextOptimizer;
+    private MultiIntentDecomposer? _intentDecomposer;
+    private AdaptiveFewShotLearning? _fewShotLearning;
+    private DynamicGlossary? _dynamicGlossary;
+    private SkillSuccessFeedback? _skillFeedback;
+    private PromptCache? _promptCache;
+
     public WebViewBridge(WebView2 webView, UIApplication uiApp)
     {
         _webView = webView;
@@ -60,6 +75,7 @@ public class WebViewBridge : IDisposable
         RegisterKnowledge(skillRegistry, contextManager);
         RegisterDynamicCode(skillRegistry);
         InitializeQueryUnderstanding(skillRegistry);
+        InitializeLLMIntelligence();
 
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
 
@@ -71,7 +87,14 @@ public class WebViewBridge : IDisposable
             patternLearning: _patternLearning,
             queryPreprocessor: _queryPreprocessor,
             adaptivePromptBuilder: _adaptivePromptBuilder,
-            skillRouter: _skillRouter);
+            skillRouter: _skillRouter,
+            queryRewriter: _queryRewriter,
+            contextOptimizer: _contextOptimizer,
+            intentDecomposer: _intentDecomposer,
+            fewShotLearning: _fewShotLearning,
+            dynamicGlossary: _dynamicGlossary,
+            skillFeedback: _skillFeedback,
+            promptCache: _promptCache);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -102,7 +125,6 @@ public class WebViewBridge : IDisposable
                 Type = BridgeMessageTypes.ConfirmationRequired,
                 Content = description
             });
-            // For now, auto-approve; will be replaced with UI confirmation flow
             return true;
         };
 
@@ -110,6 +132,7 @@ public class WebViewBridge : IDisposable
         _ = InitializeKnowledgeAsync();
         _ = InitializeMemoryAsync();
         _ = InitializeCodeGenModulesAsync();
+        _ = InitializeLLMModulesAsync();
     }
 
     private static void RegisterMEPComponents(
@@ -121,10 +144,7 @@ public class WebViewBridge : IDisposable
             var mepAssembly = typeof(MEP.Skills.Query.QueryElementsSkill).Assembly;
             registry.RegisterFromAssembly(mepAssembly);
         }
-        catch
-        {
-            // MEP assembly may not be available during development
-        }
+        catch { }
 
         try
         {
@@ -137,10 +157,7 @@ public class WebViewBridge : IDisposable
             contextManager.Register(new MEP.Context.LevelSummaryProvider());
             contextManager.Register(new MEP.Context.ModelInventoryProvider());
         }
-        catch
-        {
-            // Context providers may fail during development
-        }
+        catch { }
     }
 
     private void RegisterKnowledge(SkillRegistry registry, ContextManager contextManager)
@@ -162,19 +179,8 @@ public class WebViewBridge : IDisposable
             var searchSkill = new KnowledgeSearchSkill(_knowledgeManager);
             registry.Register(searchSkill);
         }
-        catch
-        {
-            // Knowledge module is non-critical
-        }
+        catch { }
     }
-
-    private CodeGenLibrary? _codeGenLibrary;
-    private DynamicSkillRegistry? _dynamicSkillRegistry;
-    private CodePatternLearning? _patternLearning;
-    private DynamicCodeExecutor? _codeExecutor;
-    private QueryPreprocessor? _queryPreprocessor;
-    private AdaptivePromptBuilder? _adaptivePromptBuilder;
-    private SemanticSkillRouter? _skillRouter;
 
     private void RegisterDynamicCode(SkillRegistry registry)
     {
@@ -210,10 +216,7 @@ public class WebViewBridge : IDisposable
             var skill = new DynamicCodeSkill(_codeExecutor, _codeGenLibrary, _dynamicSkillRegistry, _patternLearning);
             registry.Register(skill);
         }
-        catch
-        {
-            // Dynamic code module is non-critical
-        }
+        catch { }
     }
 
     private void InitializeQueryUnderstanding(SkillRegistry skillRegistry)
@@ -236,14 +239,51 @@ public class WebViewBridge : IDisposable
 
             _ = InitializeSkillRouterAsync(skillRegistry);
         }
-        catch
+        catch { }
+    }
+
+    private void InitializeLLMIntelligence()
+    {
+        try
         {
-            // Non-critical — fall back to default behavior
+            var addinDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+            var dataDir = Path.Combine(addinDir, "llm_data");
+            Directory.CreateDirectory(dataDir);
+
+            _queryRewriter = new ConversationQueryRewriter(_ollamaService!);
+
+            var opts = _ollamaService!.GetCurrentOptions();
+            _contextOptimizer = new ContextWindowOptimizer(opts.NumCtx ?? 8192);
+
+            _intentDecomposer = new MultiIntentDecomposer(_ollamaService);
+
+            _fewShotLearning = new AdaptiveFewShotLearning(
+                Path.Combine(dataDir, "learned_fewshot.json"));
+
+            _dynamicGlossary = new DynamicGlossary(
+                Path.Combine(dataDir, "dynamic_glossary.json"));
+
+            _promptCache = new PromptCache();
+            _promptCache.Initialize();
         }
+        catch { }
+    }
+
+    private async Task InitializeLLMModulesAsync()
+    {
+        try
+        {
+            var tasks = new List<Task>();
+            if (_fewShotLearning != null) tasks.Add(_fewShotLearning.LoadAsync());
+            if (_dynamicGlossary != null) tasks.Add(_dynamicGlossary.LoadAsync());
+            await Task.WhenAll(tasks);
+        }
+        catch { }
     }
 
     /// <summary>
-    /// Adapter bridging Knowledge.Embeddings.IEmbeddingService → Core.LLM.ISkillEmbeddingProvider.
+    /// Adapter bridging Knowledge.Embeddings.IEmbeddingService -> Core.LLM.ISkillEmbeddingProvider.
     /// </summary>
     private class OllamaEmbeddingAdapter : ISkillEmbeddingProvider, IDisposable
     {
@@ -263,7 +303,7 @@ public class WebViewBridge : IDisposable
             if (_skillRouter != null)
                 await _skillRouter.InitializeAsync(skillRegistry.GetAllDescriptors());
         }
-        catch { /* Non-critical */ }
+        catch { }
     }
 
     private async Task InitializeKnowledgeAsync()
@@ -279,10 +319,7 @@ public class WebViewBridge : IDisposable
             if (Directory.Exists(knowledgeDir))
                 await _knowledgeManager.IndexDirectoryAsync(knowledgeDir);
         }
-        catch
-        {
-            // Non-critical initialization
-        }
+        catch { }
     }
 
     private MemoryManager? InitializeMemory(OllamaService ollama, ContextManager contextManager)
@@ -295,6 +332,8 @@ public class WebViewBridge : IDisposable
             var memory = new MemoryManager(memoryDir, ollama);
 
             contextManager.Register(new MemoryContextProvider(memory));
+
+            _skillFeedback = new SkillSuccessFeedback(memory.Analytics);
 
             return memory;
         }
@@ -327,10 +366,7 @@ public class WebViewBridge : IDisposable
                 });
             }
         }
-        catch
-        {
-            // Non-critical
-        }
+        catch { }
     }
 
     private async Task InitializeCodeGenModulesAsync()
@@ -343,7 +379,7 @@ public class WebViewBridge : IDisposable
             if (_patternLearning != null) tasks.Add(_patternLearning.LoadAsync());
             await Task.WhenAll(tasks);
         }
-        catch { /* Non-critical */ }
+        catch { }
     }
 
     private async void OnWebMessageReceived(
@@ -364,6 +400,10 @@ public class WebViewBridge : IDisposable
 
                 case BridgeMessageTypes.SettingsUpdate:
                     HandleSettingsUpdate(message.Data);
+                    break;
+
+                case "partial_input":
+                    HandlePartialInput(message.Content ?? "");
                     break;
             }
         }
@@ -418,6 +458,24 @@ public class WebViewBridge : IDisposable
         }
     }
 
+    private void HandlePartialInput(string partialInput)
+    {
+        var partial = ChatSessionV2.AnalyzePartialInput(partialInput);
+        if (partial != null && partial.Confidence >= 0.5)
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.PartialIntent,
+                Content = partial.Intent,
+                Data = new Dictionary<string, object?>
+                {
+                    ["category"] = partial.Category,
+                    ["confidence"] = partial.Confidence
+                }
+            });
+        }
+    }
+
     private void HandleSettingsUpdate(Dictionary<string, object?>? data)
     {
         if (data is null || _ollamaService is null) return;
@@ -449,6 +507,8 @@ public class WebViewBridge : IDisposable
             _codeGenLibrary?.SaveAsync().GetAwaiter().GetResult();
             _dynamicSkillRegistry?.SaveAsync().GetAwaiter().GetResult();
             _patternLearning?.SaveAsync().GetAwaiter().GetResult();
+            _fewShotLearning?.SaveAsync().GetAwaiter().GetResult();
+            _dynamicGlossary?.SaveAsync().GetAwaiter().GetResult();
         }
         catch { }
 

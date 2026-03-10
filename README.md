@@ -1,6 +1,6 @@
 # Revit MEP ChatBot
 
-An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence and self-learning, **smart query understanding** (bilingual intent/entity extraction, adaptive prompting, semantic skill routing, few-shot examples, clarification flow), and a **React** UI rendered via WebView2.
+An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence and self-learning, **smart query understanding** (bilingual intent/entity extraction, adaptive prompting, semantic skill routing, few-shot examples, clarification flow), **advanced LLM intelligence** (conversation rewriting, context window optimization, smart history pruning, multi-intent decomposition, adaptive few-shot learning, dynamic glossary, skill success feedback, prompt caching, response quality validation, streaming intent detection), and a **React** UI rendered via WebView2.
 
 ## Architecture Overview
 
@@ -31,6 +31,18 @@ graph TB
             MG[MepGlossary<br/>VI↔EN terminology]
             CF[ClarificationFlow<br/>ambiguity handling]
             FSI[FewShotIntentLibrary<br/>curated examples]
+        end
+        subgraph LLMIntelligence [LLM Intelligence - Advanced Modules]
+            CQR[ConversationQueryRewriter<br/>context-aware rewriting]
+            CWO[ContextWindowOptimizer<br/>token budget management]
+            SHP[SmartHistoryPruner<br/>intelligent trimming]
+            MID[MultiIntentDecomposer<br/>compound query splitting]
+            AFSL[AdaptiveFewShotLearning<br/>cross-session examples]
+            DG[DynamicGlossary<br/>per-project terms]
+            SSF[SkillSuccessFeedback<br/>analytics-based routing]
+            PC[PromptCache<br/>pre-compiled templates]
+            RQV[ResponseQualityValidator<br/>retry on low quality]
+            SID[StreamingIntentDetector<br/>real-time prediction]
         end
         subgraph CodeGenSub [CodeGen - Roslyn Runtime + Self-Evolving]
             RCC[RoslynCodeCompiler]
@@ -406,7 +418,7 @@ RevitChatBot.slnx
 │   │   ├── Agent/                        # AgentOrchestrator (ReAct), ChatSessionV2, AgentStep
 │   │   ├── CodeGen/                      # RoslynCodeCompiler, DynamicCodeExecutor, DynamicCodeSkill, CodeSecurityValidator, RevitApiCheatSheet, CodeExamplesLibrary, CodeGenLibrary, DynamicSkillRegistry, CodePatternLearning
 │   │   ├── Memory/                       # MemoryManager, ConversationStore, ConversationSummarizer, LearnedFactsStore, UserPreferencesStore, SessionAnalytics, MemoryContextProvider
-│   │   ├── LLM/                          # OllamaService, PromptBuilder, MepGlossary, QueryPreprocessor, AdaptivePromptBuilder, SemanticSkillRouter, ClarificationFlow, FewShotIntentLibrary
+│   │   ├── LLM/                          # OllamaService, PromptBuilder, MepGlossary, QueryPreprocessor, AdaptivePromptBuilder, SemanticSkillRouter, ClarificationFlow, FewShotIntentLibrary, ConversationQueryRewriter, ContextWindowOptimizer, SmartHistoryPruner, MultiIntentDecomposer, AdaptiveFewShotLearning, DynamicGlossary, SkillSuccessFeedback, PromptCache, ResponseQualityValidator, StreamingIntentDetector
 │   │   ├── Skills/                       # ISkill, SkillAttribute, SkillRegistry, SkillExecutor
 │   │   ├── Context/                      # IContextProvider, ContextManager, ContextData
 │   │   └── Models/                       # ChatMessage, BridgeMessage, ToolCall
@@ -764,7 +776,7 @@ flowchart LR
     G & H & I & J --> K["AgentOrchestrator<br/>ReAct execution"]
 ```
 
-### Six Modules
+### Stage 1: Smart NLU (6 Modules)
 
 | Module | File | Purpose |
 |---|---|---|
@@ -775,6 +787,21 @@ flowchart LR
 | **SemanticSkillRouter** | `LLM/SemanticSkillRouter.cs` | Pre-computes embeddings for all skill descriptions. Routes queries to top-K most relevant skills (cosine similarity), falling back to keyword matching. Reduces tool list from 25+ to ~10 per call. |
 | **ClarificationFlow** | `LLM/ClarificationFlow.cs` | Detects when user query is too vague and generates bilingual clarification questions with options (e.g., "Which MEP element type?" with choices). Enriches query with user's response. |
 
+### Stage 2: Advanced LLM Intelligence (10 Modules)
+
+| Priority | Module | File | Purpose |
+|---|---|---|---|
+| **P0** | **ConversationQueryRewriter** | `LLM/ConversationQueryRewriter.cs` | Rewrites short/contextual queries using recent conversation. E.g., "còn ống nước?" → "đếm ống nước tầng 2". Uses `/api/generate` structured output. |
+| **P0** | **ContextWindowOptimizer** | `LLM/ContextWindowOptimizer.cs` | Token budget management (chars/4 heuristic). Trims system prompt by intent, prioritizes context entries, and truncates history to fit within `NumCtx=8192`. |
+| **P1** | **SmartHistoryPruner** | `LLM/SmartHistoryPruner.cs` | Keeps recent 6 messages full, summarizes older ones, removes noise (cancelled actions, empty thinking). Auto-triggers at 16+ messages. |
+| **P1** | **MultiIntentDecomposer** | `LLM/MultiIntentDecomposer.cs` | Splits compound queries ("kiểm tra vận tốc gió và va chạm tầng 3") into independent sub-queries with separate intents. Fast keyword split + deep LLM fallback. |
+| **P1** | **AdaptiveFewShotLearning** | `LLM/AdaptiveFewShotLearning.cs` | Learns from successful skill invocations and persists as few-shot examples. Prioritized over static FewShotIntentLibrary. Cross-session persistence. |
+| **P2** | **DynamicGlossary** | `LLM/DynamicGlossary.cs` | Per-project terminology learning. Registers Family/Type names from model inventory. Learns corrections ("không phải, ý tôi là..."). Extends MepGlossary at runtime. |
+| **P2** | **SkillSuccessFeedback** | `LLM/SkillSuccessFeedback.cs` | Boosts skill routing scores based on SessionAnalytics. Skills with >80% success rate and 3+ calls get higher priority. Penalizes failing skills. |
+| **P2** | **PromptCache** | `LLM/PromptCache.cs` | Pre-compiles static prompt content (CheatSheet, ErrorFixes, CodeExamples) on startup. Serves cached content by intent to avoid rebuilding ~9000 tokens per call. |
+| **P2** | **ResponseQualityValidator** | `LLM/ResponseQualityValidator.cs` | Validates responses: checks data references, language match, markdown formatting, specificity. Triggers auto-retry with feedback for low-quality responses (score < 4/10). |
+| **P3** | **StreamingIntentDetector** | `LLM/StreamingIntentDetector.cs` | Pure keyword-based early intent detection on partial input while user types. Predicts intent/category with confidence score. No LLM call. |
+
 ### Ollama API Optimizations
 
 | Setting | Before | After | Impact |
@@ -784,15 +811,41 @@ flowchart LR
 | `KeepAlive` | 5m | 10m | Model stays loaded longer between queries |
 | `/api/generate` | Not used | Used for structured intent extraction | JSON schema output for precise entity extraction |
 
-### Query Processing Pipeline
+### Query Processing Pipeline (Full)
+
+```mermaid
+flowchart TB
+    A["User Query"] --> B["ConversationQueryRewriter<br/>Resolve pronouns/context"]
+    B --> C["DynamicGlossary<br/>Project term normalization"]
+    C --> D["MepGlossary<br/>Bilingual normalization"]
+    D --> E["QueryPreprocessor<br/>Fast → Deep if ambiguous"]
+    E --> F["MultiIntentDecomposer<br/>Split if compound"]
+    E --> G["ClarificationFlow<br/>Ask if too vague"]
+    E --> H["SemanticSkillRouter<br/>+ SkillSuccessFeedback"]
+    E --> I["AdaptiveFewShotLearning<br/>+ FewShotIntentLibrary"]
+    E --> J["ContextWindowOptimizer<br/>Token budget trimming"]
+    J --> K["SmartHistoryPruner<br/>if history > 16"]
+    K --> L["PromptCache<br/>Pre-compiled templates"]
+    F & G & H & I & L --> M["AgentOrchestrator<br/>ReAct execution"]
+    M --> N["ResponseQualityValidator<br/>Retry if low quality"]
+    N --> O["Final Response"]
+```
+
+#### Example Walkthrough
 
 1. **User types**: "kiểm tra bảo ôn ống lạnh tầng 2"
-2. **MepGlossary**: Normalizes → "check insulation chilled_water_pipe Level 2"
-3. **QueryPreprocessor (fast)**: `{intent: "check", category: "pipe", systemType: "ChilledWater", level: "Level 2"}`
-4. **FewShotIntentLibrary**: Selects 4 matching examples → `check_insulation(system_filter="ChilledWater")`
-5. **SemanticSkillRouter**: Ranks skills → `[check_insulation, query_elements, check_duct_velocity, ...]`
-6. **AdaptivePromptBuilder**: Uses "Check Mode" prompt with red flags and QA workflow
-7. **AgentOrchestrator**: LLM correctly calls `check_insulation` with `system_filter="ChilledWater"` and `level_name="Level 2"`
+2. **ConversationQueryRewriter**: No rewriting needed (query is self-contained)
+3. **DynamicGlossary**: Checks project-specific terms (none matched)
+4. **MepGlossary**: Normalizes → "check insulation chilled_water_pipe Level 2"
+5. **QueryPreprocessor (fast)**: `{intent: "check", category: "pipe", systemType: "ChilledWater", level: "Level 2"}`
+6. **AdaptiveFewShotLearning**: Returns 2 learned examples from past sessions
+7. **FewShotIntentLibrary**: Selects 3 static examples → total 5 examples
+8. **SemanticSkillRouter + SkillSuccessFeedback**: Ranks skills, boosts `check_insulation` (90% success rate)
+9. **ContextWindowOptimizer**: Trims system prompt to "Check Mode" sections only, prioritizes model_inventory
+10. **SmartHistoryPruner**: History < 16, no pruning needed
+11. **PromptCache**: Returns pre-compiled CheatSheet
+12. **AgentOrchestrator**: LLM calls `check_insulation` with correct params
+13. **ResponseQualityValidator**: Score 8/10, passes (response references element IDs and uses table)
 
 ## References
 

@@ -10,7 +10,7 @@ namespace RevitChatBot.Core.Agent;
 /// <summary>
 /// Enhanced chat session with cross-session memory, conversation summarization,
 /// learned facts, user preferences, and self-evolving codegen skills.
-/// Wraps AgentOrchestrator for backward compatibility.
+/// Integrates all 10 LLM intelligence modules via AgentOrchestrator.
 /// </summary>
 public class ChatSessionV2
 {
@@ -44,7 +44,14 @@ public class ChatSessionV2
         CodePatternLearning? patternLearning = null,
         QueryPreprocessor? queryPreprocessor = null,
         AdaptivePromptBuilder? adaptivePromptBuilder = null,
-        SemanticSkillRouter? skillRouter = null)
+        SemanticSkillRouter? skillRouter = null,
+        ConversationQueryRewriter? queryRewriter = null,
+        ContextWindowOptimizer? contextOptimizer = null,
+        MultiIntentDecomposer? intentDecomposer = null,
+        AdaptiveFewShotLearning? fewShotLearning = null,
+        DynamicGlossary? dynamicGlossary = null,
+        SkillSuccessFeedback? skillFeedback = null,
+        PromptCache? promptCache = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
@@ -54,14 +61,15 @@ public class ChatSessionV2
         _agent = new AgentOrchestrator(
             ollama, skillRegistry, skillExecutor, contextManager, _promptBuilder, memory,
             codeGenLibrary, dynamicSkillRegistry, patternLearning,
-            queryPreprocessor, adaptivePromptBuilder, skillRouter);
+            queryPreprocessor, adaptivePromptBuilder, skillRouter,
+            queryRewriter, contextOptimizer, intentDecomposer,
+            fewShotLearning, dynamicGlossary, skillFeedback, promptCache);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }
 
     /// <summary>
     /// Initialize memory and restore previous conversation if available.
-    /// Call this after construction with the project key.
     /// </summary>
     public async Task InitializeMemoryAsync(string projectKey, CancellationToken ct = default)
     {
@@ -78,6 +86,13 @@ public class ChatSessionV2
     }
 
     public void SetAgentMode(bool enabled) => _useAgentMode = enabled;
+
+    /// <summary>
+    /// Perform streaming intent detection on partial input (while typing).
+    /// Returns predicted intent/category or null if not enough input.
+    /// </summary>
+    public static PartialAnalysis? AnalyzePartialInput(string partialInput) =>
+        StreamingIntentDetector.AnalyzePartial(partialInput);
 
     public async Task<string> SendMessageAsync(
         string userMessage,
@@ -134,7 +149,7 @@ public class ChatSessionV2
     }
 
     /// <summary>
-    /// Persist all memory to disk. Call on window close or periodically.
+    /// Persist all memory to disk.
     /// </summary>
     public async Task PersistMemoryAsync(CancellationToken ct = default)
     {
@@ -145,7 +160,7 @@ public class ChatSessionV2
         }
         catch
         {
-            // Non-critical — don't crash on persist failure
+            // Non-critical
         }
     }
 

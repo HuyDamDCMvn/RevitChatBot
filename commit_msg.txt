@@ -1,0 +1,14 @@
+feat: add 10 advanced LLM intelligence modules for enhanced context understanding
+
+- P0: ConversationQueryRewriter - rewrites short/contextual queries using conversation history
+- P0: ContextWindowOptimizer - token budget management, trims prompt/context/history by intent
+- P1: SmartHistoryPruner - intelligent in-session history trimming at 16+ messages
+- P1: MultiIntentDecomposer - splits compound queries into independent sub-queries
+- P1: AdaptiveFewShotLearning - learns from successful skill invocations, cross-session persistence
+- P2: DynamicGlossary - per-project terminology learning from model inventory and corrections
+- P2: SkillSuccessFeedback - boosts skill routing scores based on SessionAnalytics success rates
+- P2: PromptCache - pre-compiles static prompt templates on startup for faster response
+- P2: ResponseQualityValidator - validates response quality and auto-retries on low scores
+- P3: StreamingIntentDetector - early intent detection on partial input while typing
+- Full integration into AgentOrchestrator (6-phase pipeline) and WebViewBridge
+- Updated README with architecture diagram, module documentation, and full pipeline walkthrough
