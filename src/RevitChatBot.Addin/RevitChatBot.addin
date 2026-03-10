@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>RevitChatBot</Name>
+    <Assembly>RevitChatBot.Addin.dll</Assembly>
+    <FullClassName>RevitChatBot.Addin.App</FullClassName>
+    <AddInId>A1B2C3D4-E5F6-7890-ABCD-EF1234567890</AddInId>
+    <VendorId>DCMvn</VendorId>
+    <VendorDescription>DCMvn - Revit MEP ChatBot</VendorDescription>
+  </AddIn>
+</RevitAddIns>

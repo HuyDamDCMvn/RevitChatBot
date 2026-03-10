@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RevitChatBot.Addin/RevitChatBot.Addin.csproj" />
+    <Project Path="src/RevitChatBot.Core/RevitChatBot.Core.csproj" />
+    <Project Path="src/RevitChatBot.Knowledge/RevitChatBot.Knowledge.csproj" />
+    <Project Path="src/RevitChatBot.MEP/RevitChatBot.MEP.csproj" />
+    <Project Path="src/RevitChatBot.RevitServices/RevitChatBot.RevitServices.csproj" />
+  </Folder>
+</Solution>

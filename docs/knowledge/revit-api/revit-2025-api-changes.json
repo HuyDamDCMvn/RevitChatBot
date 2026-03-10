@@ -1,0 +1,102 @@
+[
+  {
+    "content": "Revit 2025 is built on .NET 8. All add-ins must be rebuilt for .NET 8 compatibility. Previous .NET Framework add-ins will not work.",
+    "category": "Revit 2025 - Platform",
+    "metadata": { "topic": "platform", "version": "2025" }
+  },
+  {
+    "content": "ParameterType enum is DEPRECATED in Revit 2025. Use ForgeTypeId instead. Examples: ParameterType.Length → SpecTypeId.Length, ParameterType.Area → SpecTypeId.Area, ParameterType.Volume → SpecTypeId.Volume, ParameterType.Angle → SpecTypeId.Angle.",
+    "category": "Revit 2025 - Deprecated API",
+    "metadata": { "topic": "deprecated", "api": "ParameterType", "replacement": "ForgeTypeId/SpecTypeId" }
+  },
+  {
+    "content": "UnitType enum is DEPRECATED in Revit 2025. Use UnitTypeId instead. Examples: UnitType.UT_Millimeters → UnitTypeId.Millimeters, UnitType.UT_Meters → UnitTypeId.Meters, UnitType.UT_SquareMeters → UnitTypeId.SquareMeters.",
+    "category": "Revit 2025 - Deprecated API",
+    "metadata": { "topic": "deprecated", "api": "UnitType", "replacement": "UnitTypeId" }
+  },
+  {
+    "content": "Definition.ParameterGroup property is DEPRECATED. Use Definition.GetGroupTypeId() instead to get the parameter group as ForgeTypeId.",
+    "category": "Revit 2025 - Deprecated API",
+    "metadata": { "topic": "deprecated", "api": "ParameterGroup", "replacement": "GetGroupTypeId()" }
+  },
+  {
+    "content": "PipeSystemType enum does NOT contain 'Storm' in Revit 2025. For storm water pipes, use PipeSystemType.OtherPipe instead of PipeSystemType.Storm.",
+    "category": "Revit 2025 - MEP API",
+    "metadata": { "topic": "mep", "api": "PipeSystemType", "discipline": "Plumbing" }
+  },
+  {
+    "content": "Revit 2025 MEP Duct Settings: RbsDuctSettingsElem.AirViscosity is DEPRECATED. Use DuctSettings.AirDynamicViscosity instead. DuctPressureDropData.Viscosity is DEPRECATED, use DuctPressureDropData.DynamicViscosity. The old properties were kinematic viscosity; new ones are dynamic viscosity.",
+    "category": "Revit 2025 - MEP API",
+    "metadata": { "topic": "mep", "api": "DuctSettings", "discipline": "HVAC" }
+  },
+  {
+    "content": "Revit 2025 Electrical API: Distribution system parameters renamed. RBS_ELEC_PANEL_TOTALESTLOAD_PARAM renamed from 'Total Estimated Demand' to 'Total Demand Apparent Power'. RBS_ELEC_PANEL_TOTALLOAD_PARAM renamed from 'Total Connected' to 'Total Connected Apparent Power'. Multiple Apparent Load parameters renamed to 'Apparent Power'. AnalyticalPowerSourceData.Voltage → AnalyticalPowerSourceData.AssignedVoltage.",
+    "category": "Revit 2025 - Electrical API",
+    "metadata": { "topic": "electrical", "api": "DistributionSystem", "discipline": "Electrical" }
+  },
+  {
+    "content": "Revit 2025 Dimension API change: After introduction of LinearDimension class, filtering for Dimensions will return linear dimensions as type LinearDimension (child class) instead of Dimension (parent class). typeof() checks like .GetType().Equals(typeof(Dimension)) will NOT match LinearDimension. Use 'is Dimension' pattern instead.",
+    "category": "Revit 2025 - API Change",
+    "metadata": { "topic": "dimension", "api": "LinearDimension" }
+  },
+  {
+    "content": "Revit 2025 Array API: LinearArray.IsValidArraySize() is DEPRECATED → use LinearArray.IsValidNumberOfMembers(). RadialArray.IsValidArraySize() is DEPRECATED → use RadialArray.IsValidNumberOfMembers(). New methods take Document as argument for accurate validation in both project and family documents.",
+    "category": "Revit 2025 - Deprecated API",
+    "metadata": { "topic": "deprecated", "api": "Array" }
+  },
+  {
+    "content": "Revit 2025 Extensible Storage fix: Document.EraseSchemaAndAllEntities() now properly removes entities from ALL parts of a Revit model. ExtensibleStorageFilter() now properly filters all elements associated with extensible storage data based on specific Schema IDs.",
+    "category": "Revit 2025 - API Fix",
+    "metadata": { "topic": "extensible_storage", "api": "Schema" }
+  },
+  {
+    "content": "FilteredElementCollector best practices for Revit 2025: Always apply at least one filter before iterating. Use OfClass() or OfCategory() as the first filter (QuickFilter, most efficient). Chain with WhereElementIsNotElementType() to get instances only. Use GetElementCount() instead of ToList().Count for counting. Use FirstOrDefault() to safely get single elements.",
+    "category": "Revit API - Best Practice",
+    "metadata": { "topic": "performance", "api": "FilteredElementCollector" }
+  },
+  {
+    "content": "Revit API Unit Conversion: Internal units are FEET. Conversion factors: 1 foot = 0.3048 meters, 1 foot = 304.8 mm, 1 sq foot = 0.092903 sq meters, 1 cu foot = 0.0283168 cu meters. Use UnitUtils.ConvertToInternalUnits(value, UnitTypeId.Millimeters) for precise input, UnitUtils.ConvertFromInternalUnits(value, UnitTypeId.Meters) for display output.",
+    "category": "Revit API - Units",
+    "metadata": { "topic": "units", "api": "UnitUtils" }
+  },
+  {
+    "content": "Revit API MEP Connector traversal: Use element.ConnectorManager.Connectors to iterate over all connectors. Each Connector has properties: Flow (airflow/water flow), Domain (DomainHvac, DomainPiping, DomainElectrical), ConnectorType (End, Curve, Physical), Direction, Origin. To traverse connected elements: connector.AllRefs gives connected connectors.",
+    "category": "Revit API - MEP",
+    "metadata": { "topic": "mep", "api": "Connector", "discipline": "General" }
+  },
+  {
+    "content": "Revit API Transaction rules: ALL model modifications must be inside a Transaction. Pattern: using var tx = new Transaction(doc, 'name'); tx.Start(); ... tx.Commit(); SubTransaction can be used inside an open Transaction for partial rollback. TransactionGroup wraps multiple transactions. FailureHandling can be set via tx.GetFailureHandlingOptions().",
+    "category": "Revit API - Transaction",
+    "metadata": { "topic": "transaction", "api": "Transaction" }
+  },
+  {
+    "content": "Revit API Element Creation - MEP: Pipe.Create(doc, systemTypeId, pipeTypeId, levelId, startXYZ, endXYZ) creates a pipe. Duct.Create(doc, systemTypeId, ductTypeId, levelId, startXYZ, endXYZ) creates a duct. doc.Create.NewFamilyInstance(location, symbol, level, structuralType) places equipment. Always check symbol.IsActive and call Activate() before placing.",
+    "category": "Revit API - Creation",
+    "metadata": { "topic": "creation", "api": "Create", "discipline": "MEP" }
+  },
+  {
+    "content": "Revit API MEP System Types: MechanicalSystemType classifications: SupplyAir, ReturnAir, ExhaustAir, OtherAir, UndefinedSystemClassification. PipingSystemType classifications: DomesticColdWater, DomesticHotWater, Sanitary, SupplyHydronic, ReturnHydronic, Vent, OtherPipe, FireProtectWet, FireProtectDry. ElectricalSystemType: PowerCircuit, DataCircuit.",
+    "category": "Revit API - MEP Systems",
+    "metadata": { "topic": "mep_systems", "api": "SystemClassification", "discipline": "MEP" }
+  },
+  {
+    "content": "Revit API Space and Room: Space (Autodesk.Revit.DB.Mechanical.Space) is MEP-specific, Room is architectural. Space properties: Area (sq ft), Volume (cu ft), DesignSupplyAirflow, DesignReturnAirflow, DesignExhaustAirflow, ActualSupplyAirflow. Get by: new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_MEPSpaces).Cast<Space>(). Space parameters: ROOM_NAME, ROOM_NUMBER, ROOM_AREA, ROOM_VOLUME.",
+    "category": "Revit API - MEP Spaces",
+    "metadata": { "topic": "spaces", "api": "Space", "discipline": "HVAC" }
+  },
+  {
+    "content": "Revit 2025 BRepBuilder: Now accepts HermiteSurface as a permitted support surface type for faces. BRepBuilderSurfaceGeometry.Create() can accept a HermiteSurface. BRepBuilder.IsPermittedSurfaceType() returns true for HermiteSurface.",
+    "category": "Revit 2025 - Geometry API",
+    "metadata": { "topic": "geometry", "api": "BRepBuilder" }
+  },
+  {
+    "content": "Revit 2025 Toposolid parameters renamed: SSE_POINT_ElEVATION_BASE_TYPE → SSE_POINT_ELEVATION_BASE_TYPE (typo fix). Functionality unchanged.",
+    "category": "Revit 2025 - Parameter Rename",
+    "metadata": { "topic": "parameter_rename", "api": "Toposolid" }
+  },
+  {
+    "content": "Revit API Clash Detection methods: BoundingBoxIntersectsFilter(Outline) - fast but approximate using bounding boxes. ElementIntersectsElementFilter(element) - more precise using actual geometry. ElementIntersectsSolidFilter(solid) - checks against a specific solid. For MEP clash detection, use BoundingBox first for speed, then optionally refine with geometry-based filter.",
+    "category": "Revit API - Clash Detection",
+    "metadata": { "topic": "clash", "api": "IntersectsFilter", "discipline": "Coordination" }
+  }
+]

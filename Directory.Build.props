@@ -1,0 +1,7 @@
+<Project>
+
+  <PropertyGroup>
+    <RevitApiPath>C:\Program Files\Autodesk\Revit 2025</RevitApiPath>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,327 @@
+[
+  {
+    "content": "DIN EN 16282-1: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 1: General requirements including calculation method. Covers airflow calculation, thermal comfort (18-26°C), humidity limits (16.5 g/kg), noise control (60 dB(A)), hygiene requirements. Includes heat/moisture emission tables for kitchen appliances, simultaneity factors, and detailed calculation examples for hood extraction airflows.",
+    "category": "HVAC - Kitchen Ventilation",
+    "metadata": { "standard": "DIN EN 16282-1", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16282-2: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 2: Kitchen ventilation hoods - Design and safety requirements. Covers design specifications, safety requirements, and testing procedures for kitchen ventilation hoods.",
+    "category": "HVAC - Kitchen Ventilation",
+    "metadata": { "standard": "DIN EN 16282-2", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16282-3: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 3: Kitchen ventilation ceilings - Design and safety requirements. Specifies requirements for ventilated ceiling systems used in commercial kitchens.",
+    "category": "HVAC - Kitchen Ventilation",
+    "metadata": { "standard": "DIN EN 16282-3", "year": "2021", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16282-4: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 4: Air inlets and outlets - Design and safety requirements. Covers air terminal devices for commercial kitchen ventilation systems.",
+    "category": "HVAC - Kitchen Ventilation",
+    "metadata": { "standard": "DIN EN 16282-4", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16282-5: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 5: Air duct - Design and dimensioning. Covers ductwork design and sizing for commercial kitchen ventilation including material requirements and construction methods.",
+    "category": "HVAC - Kitchen Ventilation",
+    "metadata": { "standard": "DIN EN 16282-5", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16282-6: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 6: Aerosol separators - Design and safety requirements. Specifies grease/oil/water aerosol separation requirements for kitchen extract systems.",
+    "category": "HVAC - Kitchen Ventilation",
+    "metadata": { "standard": "DIN EN 16282-6", "year": "2018", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16282-7 Draft: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 7: Installation and use of fixed fire suppression systems. Covers fire suppression system design and installation in kitchen ventilation systems.",
+    "category": "HVAC - Kitchen Ventilation / Fire Protection",
+    "metadata": { "standard": "DIN EN 16282-7", "year": "2024", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16282-8: Equipment for commercial kitchens - Components for ventilation in commercial kitchens - Part 8: Installations for treatment of cooking fumes - Requirements and testing. Covers exhaust air treatment systems for cooking fume pollutants.",
+    "category": "HVAC - Kitchen Ventilation",
+    "metadata": { "standard": "DIN EN 16282-8", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 378-1 Draft: Refrigerating systems and heat pumps - Safety and environmental requirements - Part 1: Basic requirements, definitions, classification and selection criteria. Covers safety classification of refrigerants, system categories, occupancy classification, maximum refrigerant charge calculations, and location requirements for refrigerating systems.",
+    "category": "HVAC - Refrigeration & Heat Pumps",
+    "metadata": { "standard": "DIN EN 378-1", "year": "2025", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 378-2 Draft: Refrigerating systems and heat pumps - Safety and environmental requirements - Part 2: Design, construction, testing, marking and documentation. Covers material selection, pressure equipment directive requirements, piping design, safety devices, and system testing procedures.",
+    "category": "HVAC - Refrigeration & Heat Pumps",
+    "metadata": { "standard": "DIN EN 378-2", "year": "2025", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 378-3 Draft: Refrigerating systems and heat pumps - Safety and environmental requirements - Part 3: Installation site and personal protection. Covers requirements for machine rooms, ventilation of machine rooms, detection systems, and emergency procedures.",
+    "category": "HVAC - Refrigeration & Heat Pumps",
+    "metadata": { "standard": "DIN EN 378-3", "year": "2025", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 378-5 Draft: Refrigerating systems and heat pumps - Safety and environmental requirements - Part 5: Competence of personnel. Covers qualification requirements for personnel involved in design, manufacture, installation, maintenance and decommissioning of refrigerating systems.",
+    "category": "HVAC - Refrigeration & Heat Pumps",
+    "metadata": { "standard": "DIN EN 378-5", "year": "2025", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN ISO 5149-4: Refrigerating systems and heat pumps - Safety and environmental requirements - Part 4: Operation, maintenance, repair and recovery. Covers operational safety requirements for refrigerating systems including maintenance procedures and refrigerant recovery.",
+    "category": "HVAC - Refrigeration & Heat Pumps",
+    "metadata": { "standard": "DIN EN ISO 5149-4", "year": "2024", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-1: Energy performance of buildings - Ventilation for buildings - Part 1: Indoor environmental input parameters for design and assessment of energy performance. Defines indoor environment categories (I-IV) for thermal environment, indoor air quality, lighting, and acoustics. Key reference for HVAC design input parameters including temperature ranges, ventilation rates, and CO2 limits.",
+    "category": "HVAC - Indoor Environment & Ventilation",
+    "metadata": { "standard": "DIN EN 16798-1", "year": "2019/2022", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-3 Draft: Energy performance of buildings - Ventilation for non-residential buildings - Performance requirements for ventilation and room-conditioning systems. Covers ventilation system performance requirements, air handling unit specifications, and energy efficiency for non-residential buildings.",
+    "category": "HVAC - Indoor Environment & Ventilation",
+    "metadata": { "standard": "DIN EN 16798-3", "year": "2023", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-5-1: Energy performance of buildings - Ventilation for buildings - Part 5-1: Calculation methods for energy requirements of ventilation and air conditioning systems (Modules M5-6, M5-8, M6-5, M6-8, M7-5, M7-8) - Method 1: Distribution and generation.",
+    "category": "HVAC - Energy Calculation",
+    "metadata": { "standard": "DIN EN 16798-5-1", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-5-2: Energy performance of buildings - Ventilation for buildings - Part 5-2: Calculation methods for energy requirements of ventilation systems - Method 2: Simplified method.",
+    "category": "HVAC - Energy Calculation",
+    "metadata": { "standard": "DIN EN 16798-5-2", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-7: Energy performance of buildings - Ventilation for buildings - Part 7: Calculation methods for the determination of air flow rates in buildings including infiltration (Module M5-5).",
+    "category": "HVAC - Air Flow Calculation",
+    "metadata": { "standard": "DIN EN 16798-7", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-9: Energy performance of buildings - Ventilation for buildings - Part 9: Calculation methods for energy requirements of cooling systems - General (Module M4-1, M4-4, M4-9).",
+    "category": "HVAC - Cooling Energy Calculation",
+    "metadata": { "standard": "DIN EN 16798-9", "year": "2017", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-13: Energy performance of buildings - Ventilation for buildings - Part 13: Calculation of cooling systems - Generation (Module M4-8). Covers chiller and cooling generation system energy calculation methods.",
+    "category": "HVAC - Cooling Energy Calculation",
+    "metadata": { "standard": "DIN EN 16798-13", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-15: Energy performance of buildings - Ventilation for buildings - Part 15: Calculation of cooling systems - Storage (Module M4-6). Covers thermal energy storage calculation for cooling systems.",
+    "category": "HVAC - Cooling Energy Calculation",
+    "metadata": { "standard": "DIN EN 16798-15", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 16798-17: Energy performance of buildings - Ventilation for buildings - Part 17: Guidelines for inspection of ventilation and air conditioning systems (Module M4-11, M5-11, M6-11, M7-11).",
+    "category": "HVAC - Inspection & Maintenance",
+    "metadata": { "standard": "DIN EN 16798-17", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN CEN/TR 16798-6: Energy performance of buildings - Ventilation for buildings - Part 6: Interpretation of the requirements in EN 16798-1 - Indoor environmental input parameters for design and assessment. Technical report providing guidance on applying EN 16798-1.",
+    "category": "HVAC - Technical Report",
+    "metadata": { "standard": "DIN CEN/TR 16798-6", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN CEN/TR 16798-8: Energy performance of buildings - Ventilation for buildings - Part 8: Interpretation of the requirements in EN 16798-3 - Non-residential buildings ventilation performance. Technical report guidance.",
+    "category": "HVAC - Technical Report",
+    "metadata": { "standard": "DIN CEN/TR 16798-8", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN CEN/TR 16798-14: Energy performance of buildings - Ventilation for buildings - Part 14: Interpretation of EN 16798-13 - Cooling generation calculation guidance.",
+    "category": "HVAC - Technical Report",
+    "metadata": { "standard": "DIN CEN/TR 16798-14", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN CEN/TR 16798-16: Energy performance of buildings - Ventilation for buildings - Part 16: Interpretation of EN 16798-15 - Cooling storage calculation guidance.",
+    "category": "HVAC - Technical Report",
+    "metadata": { "standard": "DIN CEN/TR 16798-16", "year": "2017", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 2078: Calculation of thermal loads and room temperatures (design cooling load and annual simulation). German VDI guideline for HVAC engineers covering cooling load calculation methodology, internal/external heat gains, solar gains, room temperature simulation, and HVAC system sizing. Key reference for German-standard cooling load calculations.",
+    "category": "HVAC - Cooling Load Calculation",
+    "metadata": { "standard": "VDI 2078", "year": "2015", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 6022 Blatt 1: Ventilation and indoor-air quality - Hygiene requirements for ventilation and air-conditioning systems and units. Covers hygiene standards for AHU components, filter requirements, duct cleanliness, commissioning checks, and regular inspection intervals.",
+    "category": "HVAC - Hygiene & Indoor Air Quality",
+    "metadata": { "standard": "VDI 6022-1", "year": "2018", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 6022 Blatt 1 Berichtigung: Correction/amendment to VDI 6022 Part 1 - Ventilation and indoor-air quality hygiene requirements.",
+    "category": "HVAC - Hygiene & Indoor Air Quality",
+    "metadata": { "standard": "VDI 6022-1 Corr", "year": "2023", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 6022 Blatt 4: Ventilation and indoor-air quality - Qualification requirements for hygiene inspections and assessment of ventilation systems.",
+    "category": "HVAC - Hygiene & Indoor Air Quality",
+    "metadata": { "standard": "VDI 6022-4", "year": "2012", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 6022 Blatt 4-1: Ventilation and indoor-air quality - Part 4-1: Qualification for hygiene inspection of ventilation and air-conditioning systems - Training syllabus for Category A inspectors.",
+    "category": "HVAC - Hygiene & Indoor Air Quality",
+    "metadata": { "standard": "VDI 6022-4.1", "year": "2015", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 6022 Blatt 5: Ventilation and indoor-air quality - Prevention of microbial contamination in air ducts and AHU components.",
+    "category": "HVAC - Hygiene & Indoor Air Quality",
+    "metadata": { "standard": "VDI 6022-5", "year": "2018", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 6022 Blatt 6: Ventilation and indoor-air quality - Air humidity in buildings. Covers humidity control in HVAC systems for maintaining indoor air quality and comfort.",
+    "category": "HVAC - Hygiene & Indoor Air Quality",
+    "metadata": { "standard": "VDI 6022-6", "year": "2018", "language": "German", "discipline": "HVAC" }
+  },
+  {
+    "content": "VDI 6022 Blatt 7-1: Ventilation and indoor-air quality - Assessment of indoor air quality. Methods for evaluating indoor air quality parameters.",
+    "category": "HVAC - Hygiene & Indoor Air Quality",
+    "metadata": { "standard": "VDI 6022-7.1", "year": "2014", "language": "German", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 805 Draft: Water supply - Requirements for systems and components outside buildings. Covers design, installation, pressure testing, disinfection, and commissioning of water supply networks outside buildings. Includes hydraulic design, material selection, and operational requirements.",
+    "category": "Plumbing - Water Supply (External)",
+    "metadata": { "standard": "DIN EN 805", "year": "2023", "language": "German/English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 806-1 Draft: Specifications for installations inside buildings conveying water intended for human consumption - Part 1: General. Covers general requirements, definitions, and basic principles for drinking water installations inside buildings.",
+    "category": "Plumbing - Drinking Water Installation",
+    "metadata": { "standard": "DIN EN 806-1", "year": "2024", "language": "German/English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 806-2 Draft: Specifications for installations inside buildings conveying water intended for human consumption - Part 2: Design. Covers pipe sizing, material selection, backflow prevention, hot water system design, and installation layout for drinking water systems.",
+    "category": "Plumbing - Drinking Water Installation",
+    "metadata": { "standard": "DIN EN 806-2", "year": "2024", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 806-3: Specifications for installations inside buildings conveying water intended for human consumption - Part 3: Pipe sizing - Simplified method. Provides simplified calculation method for pipe sizing in drinking water installations based on loading units.",
+    "category": "Plumbing - Drinking Water Installation",
+    "metadata": { "standard": "DIN EN 806-3", "year": "2006", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 806-4: Specifications for installations inside buildings conveying water intended for human consumption - Part 4: Installation. Covers installation practices, jointing methods, pressure testing, flushing, and commissioning of drinking water piping systems.",
+    "category": "Plumbing - Drinking Water Installation",
+    "metadata": { "standard": "DIN EN 806-4", "year": "2010", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 806-5: Specifications for installations inside buildings conveying water intended for human consumption - Part 5: Operation and maintenance. Covers operational requirements, maintenance schedules, water quality monitoring, and Legionella prevention for drinking water systems.",
+    "category": "Plumbing - Drinking Water Installation",
+    "metadata": { "standard": "DIN EN 806-5", "year": "2012", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 12056-1: Gravity drainage systems inside buildings - Part 1: General and performance requirements. Covers general principles, definitions, and performance requirements for gravity drainage (sanitary and rainwater) systems inside buildings.",
+    "category": "Plumbing - Drainage Systems",
+    "metadata": { "standard": "DIN EN 12056-1", "year": "2000", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 12056-2: Gravity drainage systems inside buildings - Part 2: Sanitary pipework, layout and calculation. Covers design and sizing of sanitary drainage pipework including discharge unit values, pipe sizing tables, ventilation requirements, and gradient specifications.",
+    "category": "Plumbing - Drainage Systems",
+    "metadata": { "standard": "DIN EN 12056-2", "year": "2000", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 12056-3: Gravity drainage systems inside buildings - Part 3: Roof drainage, layout and calculation. Covers rainwater drainage system design, roof outlet sizing, gutter calculations, and siphonic drainage systems.",
+    "category": "Plumbing - Drainage Systems",
+    "metadata": { "standard": "DIN EN 12056-3", "year": "2000", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 12056-4: Gravity drainage systems inside buildings - Part 4: Waste water lifting plants - Layout and calculation. Covers pumped drainage systems for below-ground-level wastewater collection.",
+    "category": "Plumbing - Drainage Systems",
+    "metadata": { "standard": "DIN EN 12056-4", "year": "2000", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 12056-5: Gravity drainage systems inside buildings - Part 5: Installation and testing, instructions for operation, maintenance and use. Covers installation procedures, leak testing, commissioning, and maintenance of drainage systems.",
+    "category": "Plumbing - Drainage Systems",
+    "metadata": { "standard": "DIN EN 12056-5", "year": "2000", "language": "English", "discipline": "Plumbing" }
+  },
+  {
+    "content": "DIN EN 1264-1: Water based surface embedded heating and cooling systems - Part 1: Definitions and symbols. Provides terminology and symbol definitions for underfloor heating/cooling, wall heating/cooling, and ceiling heating/cooling systems using embedded water pipes.",
+    "category": "HVAC - Radiant Heating & Cooling",
+    "metadata": { "standard": "DIN EN 1264-1", "year": "2021", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 1264-2: Water based surface embedded heating and cooling systems - Part 2: Floor heating - Determination of the thermal output. Covers calculation methods for floor heating system thermal output, pipe spacing, and surface temperature distribution.",
+    "category": "HVAC - Radiant Heating & Cooling",
+    "metadata": { "standard": "DIN EN 1264-2", "year": "2021", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 1264-3: Water based surface embedded heating and cooling systems - Part 3: Dimensioning. Covers system sizing including pipe layout, flow rates, pressure drop calculations, and control zone design.",
+    "category": "HVAC - Radiant Heating & Cooling",
+    "metadata": { "standard": "DIN EN 1264-3", "year": "2021", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 1264-4: Water based surface embedded heating and cooling systems - Part 4: Installation. Covers installation methods, insulation requirements, screed types, and commissioning procedures for surface embedded systems.",
+    "category": "HVAC - Radiant Heating & Cooling",
+    "metadata": { "standard": "DIN EN 1264-4", "year": "2021", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 1264-5: Water based surface embedded heating and cooling systems - Part 5: Heating and cooling surfaces embedded in floors, ceilings and walls - Determination of the thermal output. Extends Part 2 to wall and ceiling systems.",
+    "category": "HVAC - Radiant Heating & Cooling",
+    "metadata": { "standard": "DIN EN 1264-5", "year": "2021", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 12171: Thermal insulation for building equipment and industrial installations - Determination of the thermal resistance of the installed insulation. Covers test methods for insulation thermal performance verification.",
+    "category": "HVAC - Thermal Insulation",
+    "metadata": { "standard": "DIN EN 12171", "year": "2022", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 12828: Heating systems in buildings - Design for water-based heating systems. Comprehensive standard covering design of hot water heating systems including boiler sizing, pipe network design, pump selection, expansion vessels, safety devices, controls, and system balancing.",
+    "category": "HVAC - Heating Systems",
+    "metadata": { "standard": "DIN EN 12828", "year": "2014", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 12831-1 Draft: Energy performance of buildings - Method for calculation of the design heat load - Part 1: Space heating load. Covers design heat loss calculation including transmission losses, ventilation losses, and intermittent heating corrections. Key standard for heating system sizing.",
+    "category": "HVAC - Heating Load Calculation",
+    "metadata": { "standard": "DIN EN 12831-1", "year": "2024", "language": "German/English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN EN 12831-3 Draft: Energy performance of buildings - Method for calculation of the design heat load - Part 3: Domestic hot water systems heat load and characterisation of needs. Covers DHW system sizing and energy demand calculation.",
+    "category": "Plumbing - Domestic Hot Water",
+    "metadata": { "standard": "DIN EN 12831-3", "year": "2021", "language": "English", "discipline": "Plumbing/HVAC" }
+  },
+  {
+    "content": "DIN 4108-2 (2013): Thermal insulation and energy economy in buildings - Part 2: Minimum requirements for thermal insulation. Defines minimum U-values for building envelope components, summer thermal protection verification, and minimum requirements to prevent moisture damage. Original 2013 edition.",
+    "category": "Building Physics - Thermal Insulation",
+    "metadata": { "standard": "DIN 4108-2", "year": "2013", "language": "German", "discipline": "Building Physics" }
+  },
+  {
+    "content": "DIN 4108-2 (2024): Thermal insulation and energy economy in buildings - Part 2: Minimum requirements for thermal insulation. Updated edition with revised minimum U-values, summer thermal protection criteria, and improved calculation methods for building envelope thermal performance.",
+    "category": "Building Physics - Thermal Insulation",
+    "metadata": { "standard": "DIN 4108-2", "year": "2024", "language": "German", "discipline": "Building Physics" }
+  },
+  {
+    "content": "DIN 4108-2 Draft: Thermal insulation and energy economy in buildings - Part 2: Minimum requirements for thermal insulation. Draft version with proposed updates to minimum thermal insulation requirements for building envelopes.",
+    "category": "Building Physics - Thermal Insulation",
+    "metadata": { "standard": "DIN 4108-2 Draft", "year": "2024", "language": "German", "discipline": "Building Physics" }
+  },
+  {
+    "content": "DIN 4108-3: Thermal protection and energy economy in buildings - Part 3: Protection against moisture subject to climate conditions - Requirements, calculation methods and directions for planning and construction. Covers moisture protection design including vapour diffusion calculations (Glaser method), interstitial condensation prevention, and construction details for moisture-safe building envelopes.",
+    "category": "Building Physics - Moisture Protection",
+    "metadata": { "standard": "DIN 4108-3", "year": "2024", "language": "German", "discipline": "Building Physics" }
+  },
+  {
+    "content": "DIN 4108-4: Thermal insulation and energy economy in buildings - Part 4: Hygrothermal design values. Provides thermal conductivity (λ) and water vapour diffusion resistance (μ) design values for all common building materials including insulation, masonry, concrete, wood, metals, and finishing materials. Essential reference for U-value and moisture calculations.",
+    "category": "Building Physics - Material Properties",
+    "metadata": { "standard": "DIN 4108-4", "year": "2020", "language": "English", "discipline": "Building Physics" }
+  },
+  {
+    "content": "DIN 4108 Beiblatt 2: Thermal insulation and energy economy in buildings - Supplement 2: Thermal bridges - Examples for planning and performance. Provides detailed construction examples with thermal bridge catalogue showing linear thermal transmittance (ψ-values) for common junctions: wall-floor, wall-roof, window reveals, balcony connections, and foundation details.",
+    "category": "Building Physics - Thermal Bridges",
+    "metadata": { "standard": "DIN 4108 Bbl.2", "year": "2019", "language": "German", "discipline": "Building Physics" }
+  },
+  {
+    "content": "DIN 4108 Beiblatt 2 Berichtigung 1: Correction to DIN 4108 Supplement 2 - Thermal bridges - Examples for planning and performance. Corrigendum with corrections to thermal bridge catalogue values.",
+    "category": "Building Physics - Thermal Bridges",
+    "metadata": { "standard": "DIN 4108 Bbl.2 Corr.1", "year": "2025", "language": "German", "discipline": "Building Physics" }
+  },
+  {
+    "content": "DIN CEN/TR 16798-10: Energy performance of buildings - Ventilation for buildings - Part 10: Interpretation of the requirements in EN 16798-9 - Calculation methods for energy requirements of cooling systems (Modules M4-1, M4-4, M4-9) - General. Technical report providing guidance on cooling system energy calculation methodology per EN 16798-9.",
+    "category": "HVAC - Technical Report / Cooling Energy",
+    "metadata": { "standard": "DIN CEN/TR 16798-10", "year": "2018", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN 1946-4: Ventilation and air conditioning - Part 4: Ventilation in buildings and rooms of health care. Covers HVAC design for hospitals, operating theatres, intensive care units, and medical treatment rooms. Includes air cleanliness classes (Ia, Ib, II), air change rates (min 15-20 ACH for OR), pressure cascades, HEPA filtration requirements (H13/H14), temperature/humidity ranges, and recovery room ventilation specifications.",
+    "category": "HVAC - Healthcare Ventilation",
+    "metadata": { "standard": "DIN 1946-4", "year": "2018", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN 1946-6: Ventilation and air conditioning - Part 6: Ventilation for residential buildings - General requirements, requirements for design, construction, commissioning and handover as well as maintenance. Covers residential ventilation system design including ventilation concepts (free ventilation, exhaust-only, supply-exhaust, heat recovery), airflow rate calculation per room type, infiltration assessment, window ventilation verification, and demand-controlled ventilation. Defines 4 ventilation levels: protection against moisture, reduced, nominal, and intensive ventilation.",
+    "category": "HVAC - Residential Ventilation",
+    "metadata": { "standard": "DIN 1946-6", "year": "2019", "language": "English", "discipline": "HVAC" }
+  },
+  {
+    "content": "DIN 1988-300: Codes of practice for drinking water installations - Part 300: Pipe sizing - DVGW Code of practice. German national standard for drinking water pipe sizing calculations. Provides detailed calculation methods for pipe diameter determination based on flow rates, pressure loss, simultaneous demand, and fixture loading units. Complements and extends DIN EN 806-3 with more precise German calculation methodology. Includes design flow rate tables, pressure loss diagrams, and worked examples.",
+    "category": "Plumbing - Drinking Water Pipe Sizing",
+    "metadata": { "standard": "DIN 1988-300", "year": "2012", "language": "German/English", "discipline": "Plumbing" }
+  }
+]

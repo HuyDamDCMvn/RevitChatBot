@@ -1,0 +1,46 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.vs/
+.vs/
+*.DotSettings.user
+*.nupkg
+publish/
+
+# React / Node
+ui/revitchatbot-ui/node_modules/
+ui/revitchatbot-ui/dist/
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Build outputs
+*.zip
+
+# Secrets / local config
+*.env
+*.env.local
+appsettings.local.json
+
+# Knowledge index (regenerated at runtime)
+knowledge_index.json
+
+# Memory data (user-specific)
+memory/
+
+# PDF standards (too large for git, download separately)
+# See docs/knowledge/README.md for instructions
+docs/knowledge/mep-standards/*.pdf
+docs/knowledge/bim-standards/**/*.pdf

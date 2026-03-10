@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>RevitChatBot.Addin</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitApiPath)\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitApiPath)\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RevitChatBot.Core\RevitChatBot.Core.csproj" />
+    <ProjectReference Include="..\RevitChatBot.MEP\RevitChatBot.MEP.csproj" />
+    <ProjectReference Include="..\RevitChatBot.Knowledge\RevitChatBot.Knowledge.csproj" />
+    <ProjectReference Include="..\RevitChatBot.RevitServices\RevitChatBot.RevitServices.csproj" />
+  </ItemGroup>
+
+  <!-- Copy React UI build output to bin/ui/ alongside the DLL -->
+  <Target Name="CopyReactUI" AfterTargets="Build">
+    <ItemGroup>
+      <ReactBuildFiles Include="..\..\ui\revitchatbot-ui\dist\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ReactBuildFiles)"
+          DestinationFolder="$(OutputPath)ui\%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('..\..\ui\revitchatbot-ui\dist\index.html')" />
+  </Target>
+
+  <!-- Copy .addin manifest for easy deployment -->
+  <ItemGroup>
+    <None Include="RevitChatBot.addin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
