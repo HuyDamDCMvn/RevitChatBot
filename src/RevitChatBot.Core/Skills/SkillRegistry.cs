@@ -48,6 +48,21 @@ public class SkillRegistry
         }
     }
 
+    /// <summary>
+    /// Register a skill dynamically at runtime (e.g., from codegen).
+    /// Does not require [Skill] attribute — descriptor is provided directly.
+    /// </summary>
+    public void RegisterDynamic(string name, ISkill skill, SkillDescriptor descriptor)
+    {
+        _skills[name] = skill;
+        _descriptors[name] = descriptor;
+    }
+
+    public bool Unregister(string name)
+    {
+        return _skills.Remove(name) | _descriptors.Remove(name);
+    }
+
     public ISkill? GetSkill(string name) =>
         _skills.GetValueOrDefault(name);
 

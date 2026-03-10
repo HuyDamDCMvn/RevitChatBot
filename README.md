@@ -1,6 +1,6 @@
 # Revit MEP ChatBot
 
-An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **cross-session memory** with conversation persistence and self-learning, and a **React** UI rendered via WebView2.
+An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence and self-learning, and a **React** UI rendered via WebView2.
 
 ## Architecture Overview
 
@@ -24,12 +24,15 @@ graph TB
         SR[SkillRegistry]
         SE[SkillExecutor]
         CM[ContextManager]
-        subgraph CodeGenSub [CodeGen - Roslyn Runtime]
+        subgraph CodeGenSub [CodeGen - Roslyn Runtime + Self-Evolving]
             RCC[RoslynCodeCompiler]
             DCE[DynamicCodeExecutor]
             DCS[DynamicCodeSkill]
             CSV[CodeSecurityValidator]
             ACS["RevitApiCheatSheet<br/>+ CodeExamplesLibrary"]
+            CGL["CodeGenLibrary<br/>(reuse cache)"]
+            DSR["DynamicSkillRegistry<br/>(runtime skills)"]
+            CPL["CodePatternLearning<br/>(error/API patterns)"]
         end
         subgraph MemorySub [Memory - Cross-Session Learning]
             MM[MemoryManager]
@@ -393,7 +396,7 @@ RevitChatBot.slnx
 ├── src/
 │   ├── RevitChatBot.Core/               # Reusable - no Revit dependency
 │   │   ├── Agent/                        # AgentOrchestrator (ReAct), ChatSessionV2, AgentStep
-│   │   ├── CodeGen/                      # RoslynCodeCompiler, DynamicCodeExecutor, DynamicCodeSkill, CodeSecurityValidator, RevitApiCheatSheet, CodeExamplesLibrary
+│   │   ├── CodeGen/                      # RoslynCodeCompiler, DynamicCodeExecutor, DynamicCodeSkill, CodeSecurityValidator, RevitApiCheatSheet, CodeExamplesLibrary, CodeGenLibrary, DynamicSkillRegistry, CodePatternLearning
 │   │   ├── Memory/                       # MemoryManager, ConversationStore, ConversationSummarizer, LearnedFactsStore, UserPreferencesStore, SessionAnalytics, MemoryContextProvider
 │   │   ├── LLM/                          # OllamaService, ChatSession, PromptBuilder
 │   │   ├── Skills/                       # ISkill, SkillAttribute, SkillRegistry, SkillExecutor
@@ -624,6 +627,57 @@ docs/knowledge/mep-standards/DIN EN 16798-1 - Language English 3334892.pdf
   { "content": "ASHRAE recommends max duct velocity of 2000 FPM for main ducts...", "category": "HVAC" },
   { "content": "Minimum pipe slope for sanitary drainage: 1/8 inch per foot...", "category": "Plumbing" }
 ]
+```
+
+## Self-Evolving Skill System (CodeGen Learning)
+
+The chatbot learns from its own code generation, creating a self-improving loop:
+
+```mermaid
+flowchart TD
+    A["User request"] --> B{Existing skill?}
+    B -->|Yes| C["Execute skill directly"]
+    B -->|No| D{Saved in CodeGenLibrary?}
+    D -->|"Match found"| E["Reuse saved code<br/>(skip LLM generation)"]
+    D -->|"No match"| F{Dynamic skill exists?}
+    F -->|Yes| G["Call dynamic skill by name"]
+    F -->|No| H["LLM generates new C# code"]
+    H --> I{Compile + Execute}
+    I -->|Success| J["Auto-save to CodeGenLibrary"]
+    J --> K{"User: save as skill?"}
+    K -->|Yes| L["Register as DynamicSkill<br/>(appears in tool list)"]
+    K -->|No| M["Available for future reuse"]
+    I -->|Failure| N["Record error pattern"]
+    N --> O["CodePatternLearning<br/>tracks & warns"]
+    
+    style J fill:#9f9,stroke:#333
+    style L fill:#ff9,stroke:#333
+    style N fill:#f99,stroke:#333
+```
+
+### Three Modules
+
+| Module | File | Purpose |
+|---|---|---|
+| **CodeGenLibrary** | `codegen/codegen_library.json` | Saves successful code + description + keywords. Future similar requests reuse cached code without LLM generation. |
+| **DynamicSkillRegistry** | `codegen/dynamic_skills.json` | Promotes codegen code to named skills that appear in the LLM's tool list. Called directly like built-in skills. |
+| **CodePatternLearning** | `codegen/patterns.json` | Tracks API usage frequency, error patterns, and learned fixes. Injects warnings and optimizations into LLM context. |
+
+### How It Works
+
+1. **First time**: User asks "count ducts by level" → LLM generates code → executes → result saved to library
+2. **Second time**: Same request → library match found → code reused instantly (no LLM call)
+3. **Promotion**: User says "save this as a skill" → `save_as_skill="count_ducts_by_level"` → skill registered
+4. **Third time**: LLM sees `count_ducts_by_level` in tool list → calls it directly
+5. **Error learning**: If codegen fails with pattern X → pattern recorded → LLM warned to avoid it next time
+
+### Storage Structure
+
+```
+codegen/
+├── codegen_library.json      # Cached successful code (up to 200 entries, LRU)
+├── dynamic_skills.json       # User-promoted skills (persist across restarts)
+└── patterns.json             # Error patterns, API usage stats, learned fixes
 ```
 
 ## Memory System (Cross-Session Learning)

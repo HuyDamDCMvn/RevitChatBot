@@ -63,7 +63,10 @@ public class WebViewBridge : IDisposable
 
         _chatSession = new ChatSessionV2(
             _ollamaService, skillRegistry, skillExecutor, contextManager,
-            memory: _memoryManager);
+            memory: _memoryManager,
+            codeGenLibrary: _codeGenLibrary,
+            dynamicSkillRegistry: _dynamicSkillRegistry,
+            patternLearning: _patternLearning);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -101,6 +104,7 @@ public class WebViewBridge : IDisposable
         _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         _ = InitializeKnowledgeAsync();
         _ = InitializeMemoryAsync();
+        _ = InitializeCodeGenModulesAsync();
     }
 
     private static void RegisterMEPComponents(
@@ -159,6 +163,11 @@ public class WebViewBridge : IDisposable
         }
     }
 
+    private CodeGenLibrary? _codeGenLibrary;
+    private DynamicSkillRegistry? _dynamicSkillRegistry;
+    private CodePatternLearning? _patternLearning;
+    private DynamicCodeExecutor? _codeExecutor;
+
     private void RegisterDynamicCode(SkillRegistry registry)
     {
         try
@@ -178,8 +187,19 @@ public class WebViewBridge : IDisposable
                 compiler.AddReferenceFromType(typeof(Autodesk.Revit.DB.Document));
             }
 
-            var executor = new DynamicCodeExecutor(compiler);
-            var skill = new DynamicCodeSkill(executor);
+            _codeExecutor = new DynamicCodeExecutor(compiler);
+
+            var addinDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+            var codegenDir = Path.Combine(addinDir, "codegen");
+            Directory.CreateDirectory(codegenDir);
+
+            _codeGenLibrary = new CodeGenLibrary(Path.Combine(codegenDir, "codegen_library.json"));
+            _dynamicSkillRegistry = new DynamicSkillRegistry(
+                Path.Combine(codegenDir, "dynamic_skills.json"), _codeExecutor, registry);
+            _patternLearning = new CodePatternLearning(Path.Combine(codegenDir, "patterns.json"));
+
+            var skill = new DynamicCodeSkill(_codeExecutor, _codeGenLibrary, _dynamicSkillRegistry, _patternLearning);
             registry.Register(skill);
         }
         catch
@@ -253,6 +273,19 @@ public class WebViewBridge : IDisposable
         {
             // Non-critical
         }
+    }
+
+    private async Task InitializeCodeGenModulesAsync()
+    {
+        try
+        {
+            var tasks = new List<Task>();
+            if (_codeGenLibrary != null) tasks.Add(_codeGenLibrary.LoadAsync());
+            if (_dynamicSkillRegistry != null) tasks.Add(_dynamicSkillRegistry.LoadAndRegisterAsync());
+            if (_patternLearning != null) tasks.Add(_patternLearning.LoadAsync());
+            await Task.WhenAll(tasks);
+        }
+        catch { /* Non-critical */ }
     }
 
     private async void OnWebMessageReceived(
@@ -339,6 +372,9 @@ public class WebViewBridge : IDisposable
         try
         {
             _chatSession?.PersistMemoryAsync().GetAwaiter().GetResult();
+            _codeGenLibrary?.SaveAsync().GetAwaiter().GetResult();
+            _dynamicSkillRegistry?.SaveAsync().GetAwaiter().GetResult();
+            _patternLearning?.SaveAsync().GetAwaiter().GetResult();
         }
         catch { }
 

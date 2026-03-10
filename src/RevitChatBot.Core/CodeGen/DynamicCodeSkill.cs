@@ -4,12 +4,13 @@ namespace RevitChatBot.Core.CodeGen;
 
 /// <summary>
 /// A skill that lets the LLM write and execute arbitrary C# code against the Revit API.
-/// The LLM should generate a complete DynamicAction class with an Execute(Document) method.
-/// Includes security validation and structured error feedback for LLM self-correction.
+/// Integrates with CodeGenLibrary (reuse), DynamicSkillRegistry (promote), and
+/// CodePatternLearning (learn) for self-evolving capabilities.
 /// </summary>
 [Skill("execute_revit_code",
     "Generate and execute C# code against the Revit API. " +
     "Use this when no existing skill can fulfill the request. " +
+    "Check [saved_codegen_library] first — if a similar task was done before, reuse that code. " +
     "Write a complete C# class named 'DynamicAction' with a static 'Execute(Document doc)' " +
     "method that returns a string result. " +
     "Available namespaces: System, System.Linq, System.Collections.Generic, " +
@@ -26,13 +27,26 @@ namespace RevitChatBot.Core.CodeGen;
     "Brief description of what the code does (for user confirmation)", isRequired: true)]
 [SkillParameter("is_destructive", "boolean",
     "Whether the code modifies the Revit model (create/modify/delete elements)", isRequired: false)]
+[SkillParameter("save_as_skill", "string",
+    "If set, save this code as a reusable skill with this name (e.g., 'count_ducts_by_level'). " +
+    "Only use after successful execution when the user confirms saving.", isRequired: false)]
 public class DynamicCodeSkill : ISkill
 {
     private readonly DynamicCodeExecutor _executor;
+    private readonly CodeGenLibrary? _library;
+    private readonly DynamicSkillRegistry? _dynamicRegistry;
+    private readonly CodePatternLearning? _patternLearning;
 
-    public DynamicCodeSkill(DynamicCodeExecutor executor)
+    public DynamicCodeSkill(
+        DynamicCodeExecutor executor,
+        CodeGenLibrary? library = null,
+        DynamicSkillRegistry? dynamicRegistry = null,
+        CodePatternLearning? patternLearning = null)
     {
         _executor = executor;
+        _library = library;
+        _dynamicRegistry = dynamicRegistry;
+        _patternLearning = patternLearning;
     }
 
     public async Task<SkillResult> ExecuteAsync(
@@ -44,23 +58,63 @@ public class DynamicCodeSkill : ISkill
             return SkillResult.Fail("Parameter 'code' is required and must contain valid C# code.");
 
         var description = parameters.GetValueOrDefault("description")?.ToString() ?? "Dynamic code execution";
+        var saveAsSkill = parameters.GetValueOrDefault("save_as_skill")?.ToString();
 
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API invoker not available. Cannot execute code outside of Revit.");
+
+        var cachedEntry = _library?.FindMatch(description);
+        if (cachedEntry != null && cachedEntry.Code == code)
+        {
+            cachedEntry.UseCount++;
+            cachedEntry.LastUsed = DateTime.UtcNow;
+        }
 
         var result = await _executor.ExecuteAsync(code, context.RevitApiInvoker, cancellationToken);
 
         if (result.Success)
         {
-            return SkillResult.Ok(
-                result.Output ?? "Code executed successfully.",
-                new
+            _library?.RecordSuccess(description, result.GeneratedCode ?? code,
+                result.Output ?? "", result.ExecutionTime.TotalMilliseconds);
+            _patternLearning?.RecordSuccess(result.GeneratedCode ?? code,
+                description, result.ExecutionTime.TotalMilliseconds);
+
+            if (!string.IsNullOrWhiteSpace(saveAsSkill) && _dynamicRegistry != null)
+            {
+                try
                 {
-                    description,
-                    executionTime = result.ExecutionTime.TotalMilliseconds,
-                    generatedCode = result.GeneratedCode
-                });
+                    var def = _dynamicRegistry.CreateSkill(saveAsSkill, description, result.GeneratedCode ?? code);
+                    _ = _dynamicRegistry.SaveAsync(CancellationToken.None);
+
+                    return SkillResult.Ok(
+                        $"{result.Output}\n\n--- Saved as reusable skill: '{def.Name}' ---\n" +
+                        $"You can now call this skill directly by name in future requests.",
+                        new { description, executionTime = result.ExecutionTime.TotalMilliseconds,
+                              savedAsSkill = def.Name });
+                }
+                catch (Exception ex)
+                {
+                    return SkillResult.Ok(
+                        $"{result.Output}\n\n(Could not save as skill: {ex.Message})",
+                        new { description, executionTime = result.ExecutionTime.TotalMilliseconds });
+                }
+            }
+
+            _ = Task.Run(() => _library?.SaveAsync(CancellationToken.None));
+            _ = Task.Run(() => _patternLearning?.SaveAsync(CancellationToken.None));
+
+            var savedNote = _library != null
+                ? "\n\n(Code saved to library for future reuse.)" : "";
+
+            return SkillResult.Ok(
+                (result.Output ?? "Code executed successfully.") + savedNote,
+                new { description, executionTime = result.ExecutionTime.TotalMilliseconds,
+                      generatedCode = result.GeneratedCode });
         }
+
+        _library?.RecordFailure(description, result.GeneratedCode ?? code, result.Error ?? "");
+        _patternLearning?.RecordFailure(result.GeneratedCode ?? code, result.Error ?? "");
+        _ = Task.Run(() => _patternLearning?.SaveAsync(CancellationToken.None));
 
         var errorFeedback = BuildErrorFeedback(result);
         return SkillResult.Fail(errorFeedback, result.GeneratedCode);

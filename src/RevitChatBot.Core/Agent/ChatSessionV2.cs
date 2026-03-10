@@ -1,3 +1,4 @@
+using RevitChatBot.Core.CodeGen;
 using RevitChatBot.Core.Context;
 using RevitChatBot.Core.LLM;
 using RevitChatBot.Core.Memory;
@@ -8,7 +9,8 @@ namespace RevitChatBot.Core.Agent;
 
 /// <summary>
 /// Enhanced chat session with cross-session memory, conversation summarization,
-/// learned facts, and user preferences. Wraps AgentOrchestrator for backward compatibility.
+/// learned facts, user preferences, and self-evolving codegen skills.
+/// Wraps AgentOrchestrator for backward compatibility.
 /// </summary>
 public class ChatSessionV2
 {
@@ -35,7 +37,10 @@ public class ChatSessionV2
         SkillExecutor skillExecutor,
         ContextManager contextManager,
         PromptBuilder? promptBuilder = null,
-        MemoryManager? memory = null)
+        MemoryManager? memory = null,
+        CodeGenLibrary? codeGenLibrary = null,
+        DynamicSkillRegistry? dynamicSkillRegistry = null,
+        CodePatternLearning? patternLearning = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
@@ -43,7 +48,8 @@ public class ChatSessionV2
         _memory = memory;
 
         _agent = new AgentOrchestrator(
-            ollama, skillRegistry, skillExecutor, contextManager, _promptBuilder, memory);
+            ollama, skillRegistry, skillExecutor, contextManager, _promptBuilder, memory,
+            codeGenLibrary, dynamicSkillRegistry, patternLearning);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }

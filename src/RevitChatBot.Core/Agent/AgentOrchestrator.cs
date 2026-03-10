@@ -12,6 +12,7 @@ namespace RevitChatBot.Core.Agent;
 /// The agent iterates through Thought -> Action -> Observation cycles until it reaches an answer.
 /// Supports confirmation flow for destructive actions (create/modify/delete).
 /// Integrates with MemoryManager for cross-session learning and context persistence.
+/// Integrates with CodeGenLibrary + DynamicSkillRegistry + CodePatternLearning for self-evolving skills.
 /// </summary>
 public class AgentOrchestrator
 {
@@ -21,6 +22,9 @@ public class AgentOrchestrator
     private readonly ContextManager _contextManager;
     private readonly PromptBuilder _promptBuilder;
     private readonly MemoryManager? _memory;
+    private readonly CodeGenLibrary? _codeGenLibrary;
+    private readonly DynamicSkillRegistry? _dynamicSkillRegistry;
+    private readonly CodePatternLearning? _patternLearning;
     private readonly List<ChatMessage> _history = [];
 
     private const int MaxReActSteps = 8;
@@ -50,7 +54,10 @@ public class AgentOrchestrator
         SkillExecutor skillExecutor,
         ContextManager contextManager,
         PromptBuilder? promptBuilder = null,
-        MemoryManager? memory = null)
+        MemoryManager? memory = null,
+        CodeGenLibrary? codeGenLibrary = null,
+        DynamicSkillRegistry? dynamicSkillRegistry = null,
+        CodePatternLearning? patternLearning = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -58,6 +65,9 @@ public class AgentOrchestrator
         _contextManager = contextManager;
         _promptBuilder = promptBuilder ?? new PromptBuilder();
         _memory = memory;
+        _codeGenLibrary = codeGenLibrary;
+        _dynamicSkillRegistry = dynamicSkillRegistry;
+        _patternLearning = patternLearning;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -74,6 +84,10 @@ public class AgentOrchestrator
 
         var systemPrompt = BuildReActSystemPrompt();
         var messages = new List<ChatMessage> { ChatMessage.FromSystem(systemPrompt) };
+
+        var codeGenContext = BuildCodeGenContext();
+        if (!string.IsNullOrWhiteSpace(codeGenContext))
+            messages.Add(ChatMessage.FromSystem(codeGenContext));
 
         if (context.Entries.Count > 0)
         {
@@ -163,6 +177,8 @@ public class AgentOrchestrator
 
                 if (toolCall.FunctionName == "execute_revit_code")
                     _memory?.OnCodeGenAttempt(result.Success, result.Success, result.Success ? null : "compile_error");
+
+                _dynamicSkillRegistry?.RecordUsage(toolCall.FunctionName);
 
                 var toolMessage = ChatMessage.FromTool(toolCall.FunctionName, result.ToJson());
                 messages.Add(toolMessage);
@@ -335,7 +351,7 @@ public class AgentOrchestrator
             - Open data formats: IFC (ISO 16739), BCF, gbXML, COBie
             - Level of Information Need (ISO 7817): specifies geometry/property detail per project phase
 
-            ## DYNAMIC CODE GENERATION
+            ## DYNAMIC CODE GENERATION (Self-Evolving)
             When no existing tool/skill can fulfill the request, use 'execute_revit_code':
             - Class 'DynamicAction' with static 'Execute(Document doc)' returning string
             - Available: System, System.Linq, Autodesk.Revit.DB (and sub-namespaces)
@@ -344,6 +360,15 @@ public class AgentOrchestrator
             - If compilation fails, analyze error feedback and fix (up to 3 retries).
             - CHECK [model_inventory] for exact Family/Type/Level names.
             - REFERENCE the API Cheat Sheet below for method signatures.
+            
+            ## CODEGEN REUSE & SKILL CREATION
+            - CHECK [saved_codegen_library] context first — if a similar task was done before, reuse that code.
+            - CHECK [dynamic_skills] context — previously promoted skills can be called directly by name.
+            - After successful codegen that the user finds useful, suggest saving as a skill:
+              use save_as_skill parameter with a descriptive name (e.g., 'count_ducts_by_level').
+            - Saved skills appear in the tool list and can be called without codegen.
+            - CHECK [codegen_api_usage] for commonly used patterns and known error-prone patterns.
+            - AVOID patterns listed in KNOWN ERROR-PRONE PATTERNS.
 
             ## RESPONSE FORMAT
             - Use tables for listing issues (Element ID | Issue | Severity)
@@ -357,6 +382,27 @@ public class AgentOrchestrator
                RevitApiCheatSheet.GetCheatSheet() + "\n\n" +
                RevitApiCheatSheet.GetCommonErrorFixes() + "\n\n" +
                CodeExamplesLibrary.GetExamples();
+    }
+
+    private string BuildCodeGenContext()
+    {
+        var parts = new List<string>();
+
+        var librarySummary = _codeGenLibrary?.GetLibrarySummary();
+        if (!string.IsNullOrWhiteSpace(librarySummary))
+            parts.Add(librarySummary);
+
+        var dynamicSkills = _dynamicSkillRegistry?.GetDynamicSkillsSummary();
+        if (!string.IsNullOrWhiteSpace(dynamicSkills))
+            parts.Add(dynamicSkills);
+
+        var patternContext = _patternLearning?.GetFullContext();
+        if (!string.IsNullOrWhiteSpace(patternContext))
+            parts.Add(patternContext);
+
+        return parts.Count > 0
+            ? "--- CODEGEN SELF-LEARNING CONTEXT ---\n" + string.Join("\n\n", parts)
+            : "";
     }
 
     public void ClearHistory() => _history.Clear();
