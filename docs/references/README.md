@@ -31,11 +31,113 @@
 | Endpoint | Method | Usage in Project |
 |---|---|---|
 | `/api/chat` | POST | Main chat completion with tool calling (`OllamaService.ChatAsync`) |
+| `/api/generate` | POST | Structured output for intent extraction (`OllamaService.GenerateAsync`, `QueryPreprocessor.AnalyzeDeepAsync`) |
+| `/api/embed` | POST | Vector embeddings for RAG + skill routing (`OllamaEmbeddingService`, `SemanticSkillRouter`) |
 | `/api/tags` | GET | List local models (`OllamaService.ListModelsAsync`, health check) |
+
+### Ollama /api/generate — Full Reference (for ChatBot self-learning)
+
+Source: https://docs.ollama.com/api/generate
+
+#### Request Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | string | (required) | Model name (e.g., `qwen2.5:7b`) |
+| `prompt` | string | | Text for the model to generate a response from |
+| `suffix` | string | | For fill-in-the-middle models, text after user prompt and before model response |
+| `images` | string[] | | Base64-encoded images for multimodal models |
+| `format` | string \| object | | `"json"` or JSON schema object for structured outputs |
+| `system` | string | | System prompt for the generation |
+| `stream` | boolean | true | When true, returns stream of partial responses |
+| `think` | boolean \| string | | When true, returns separate thinking output. Can be `true`/`false` or `"high"`/`"medium"`/`"low"` |
+| `raw` | boolean | | When true, raw response without prompt templating |
+| `keep_alive` | string \| number | | Model keep-alive duration (e.g., `"5m"`, `0` to unload) |
+| `options` | object | | Runtime options (see below) |
+| `logprobs` | boolean | | Return log probabilities of output tokens |
+| `top_logprobs` | integer | | Number of most likely tokens at each position |
+
+#### Options (Runtime Generation Control)
+
+| Option | Type | Description |
+|---|---|---|
+| `seed` | integer | Random seed for reproducible outputs |
+| `temperature` | float | Controls randomness (higher = more random). **Project default: 0.3** |
+| `top_k` | integer | Limits next token selection to K most likely |
+| `top_p` | float | Cumulative probability threshold for nucleus sampling |
+| `min_p` | float | Minimum probability threshold for token selection |
+| `stop` | string \| string[] | Stop sequences that halt generation |
+| `num_ctx` | integer | Context length size in tokens. **Project default: 8192** |
+| `num_predict` | integer | Maximum tokens to generate |
+
+#### Response Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `model` | string | Model name |
+| `created_at` | string | ISO 8601 timestamp |
+| `response` | string | Generated text response |
+| `thinking` | string | Generated thinking output (when `think: true`) |
+| `done` | boolean | Whether generation has finished |
+| `done_reason` | string | Reason generation stopped (e.g., `"stop"`) |
+| `total_duration` | integer | Total time in nanoseconds |
+| `load_duration` | integer | Model loading time in nanoseconds |
+| `prompt_eval_count` | integer | Number of input tokens |
+| `prompt_eval_duration` | integer | Prompt evaluation time in nanoseconds |
+| `eval_count` | integer | Output tokens generated |
+| `eval_duration` | integer | Token generation time in nanoseconds |
+
+#### Structured Output Example (used by QueryPreprocessor)
+
+```bash
+curl http://localhost:11434/api/generate -d '{
+  "model": "qwen2.5:7b",
+  "prompt": "Analyze this MEP query: kiểm tra bảo ôn ống lạnh tầng 2",
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "intent": {"type": "string", "enum": ["query","check","modify","calculate","create","delete","explain","analyze","report"]},
+      "category": {"type": "string"},
+      "system_type": {"type": "string"},
+      "level": {"type": "string"},
+      "needs_clarification": {"type": "boolean"},
+      "clarification_question": {"type": "string"}
+    },
+    "required": ["intent", "needs_clarification"]
+  },
+  "options": {
+    "temperature": 0.1,
+    "num_ctx": 2048
+  }
+}'
+```
+
+#### Thinking Mode Example (for complex ReAct reasoning)
+
+```bash
+curl http://localhost:11434/api/generate -d '{
+  "model": "qwen2.5:7b",
+  "prompt": "Plan the steps to check full QA/QC for MEP model...",
+  "think": true,
+  "stream": false
+}'
+# Response includes both "thinking" and "response" fields
+```
+
+#### Key Usage Patterns in Project
+
+| Use Case | Configuration | Module |
+|---|---|---|
+| Intent extraction | `format: JSON schema`, `temperature: 0.1`, `num_ctx: 2048` | `QueryPreprocessor.AnalyzeDeepAsync` |
+| Code generation planning | `think: true`, `temperature: 0.2` | Future: `AgentOrchestrator` codegen planning |
+| Quick classification | `num_predict: 50`, `temperature: 0` | Future: `ConversationQueryRewriter` |
+| Batch entity extraction | `format: JSON array schema`, `temperature: 0` | Future: `IntentDecomposer` |
 
 ### Current Model
 
-- **qwen2.5:7b** - Default model configured in `OllamaOptions`
+- **qwen2.5:7b** — Default model for chat + generate (`OllamaOptions.Model`)
+- **nomic-embed-text** — Embedding model for RAG + skill routing
 
 ## Roslyn (Dynamic Code Generation)
 

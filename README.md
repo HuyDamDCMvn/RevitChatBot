@@ -466,7 +466,7 @@ RevitChatBot.slnx
 │       │   ├── mep-routing-knowledge.md  # Clash detection, dogleg routing, MEP creation
 │       │   ├── mep-spatial-clearance-knowledge.md # Ray casting, room mapping, split/union
 │       │   └── mep-connector-knowledge.md # Connector ops, fitting creation, routing prefs, graph traversal
-│       ├── revit-api/                    # Revit API notes
+│       ├── revit-api/                    # Revit API notes + Ollama API reference
 │       └── project-specs/                # Project-specific specs
 │
 ├── Directory.Build.props                 # Revit API path config
@@ -562,7 +562,7 @@ Place standards documents (`.txt`, `.md`, `.json`, `.pdf`) in `docs/knowledge/`:
   - `DIN/` - DIN 276 Building costs (KG 400 = MEP systems)
   - `bim-standards-knowledge.md` - Comprehensive summary for RAG indexing
 - `mep-standards/` - ASHRAE, SMACNA, TCVN, DIN EN standards (64 PDFs)
-- `revit-api/` - Revit API reference notes, 2025 API changes
+- `revit-api/` - Revit API reference notes, 2025 API changes, Ollama API reference (`ollama-api-reference.md`)
 - `project-specs/` - Project-specific specifications
 
 The chatbot will auto-index all files (including PDFs via PdfDocumentLoader) and use them via RAG.
