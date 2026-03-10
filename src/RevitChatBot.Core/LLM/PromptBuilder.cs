@@ -33,6 +33,9 @@ public class PromptBuilder
         - Dynamic code: generate and execute custom C# via Revit API ('execute_revit_code')
         - Self-evolving: successful codegen auto-saved to library; can be promoted to reusable skill
         - Code pattern learning: error patterns tracked and auto-fixed; API usage optimized over time
+        - Smart query understanding: bilingual intent/entity extraction, few-shot skill routing
+        - Adaptive prompting: context-aware prompt construction optimized per query type
+        - Clarification flow: ask clarifying questions when user query is ambiguous
         
         ENGINEERING JUDGMENT — RED FLAGS:
         - Duct velocity > 8 m/s in branch → noise

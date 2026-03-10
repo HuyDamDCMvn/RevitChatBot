@@ -13,6 +13,8 @@ namespace RevitChatBot.Core.Agent;
 /// Supports confirmation flow for destructive actions (create/modify/delete).
 /// Integrates with MemoryManager for cross-session learning and context persistence.
 /// Integrates with CodeGenLibrary + DynamicSkillRegistry + CodePatternLearning for self-evolving skills.
+/// Integrates with QueryPreprocessor + AdaptivePromptBuilder + SemanticSkillRouter + ClarificationFlow
+/// for intelligent query understanding and optimized prompting.
 /// </summary>
 public class AgentOrchestrator
 {
@@ -25,6 +27,9 @@ public class AgentOrchestrator
     private readonly CodeGenLibrary? _codeGenLibrary;
     private readonly DynamicSkillRegistry? _dynamicSkillRegistry;
     private readonly CodePatternLearning? _patternLearning;
+    private readonly QueryPreprocessor? _queryPreprocessor;
+    private readonly AdaptivePromptBuilder? _adaptivePromptBuilder;
+    private readonly SemanticSkillRouter? _skillRouter;
     private readonly List<ChatMessage> _history = [];
 
     private const int MaxReActSteps = 8;
@@ -57,7 +62,10 @@ public class AgentOrchestrator
         MemoryManager? memory = null,
         CodeGenLibrary? codeGenLibrary = null,
         DynamicSkillRegistry? dynamicSkillRegistry = null,
-        CodePatternLearning? patternLearning = null)
+        CodePatternLearning? patternLearning = null,
+        QueryPreprocessor? queryPreprocessor = null,
+        AdaptivePromptBuilder? adaptivePromptBuilder = null,
+        SemanticSkillRouter? skillRouter = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -68,6 +76,9 @@ public class AgentOrchestrator
         _codeGenLibrary = codeGenLibrary;
         _dynamicSkillRegistry = dynamicSkillRegistry;
         _patternLearning = patternLearning;
+        _queryPreprocessor = queryPreprocessor;
+        _adaptivePromptBuilder = adaptivePromptBuilder;
+        _skillRouter = skillRouter;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -75,15 +86,74 @@ public class AgentOrchestrator
         CancellationToken cancellationToken = default)
     {
         var plan = new AgentPlan { Goal = userMessage };
+
+        // --- Phase 1: Query Preprocessing ---
+        QueryAnalysis? analysis = null;
+        if (_queryPreprocessor != null)
+        {
+            analysis = _queryPreprocessor.AnalyzeFast(userMessage);
+
+            var clarification = ClarificationFlow.CheckNeedsClarification(analysis);
+            if (clarification is { NeedsClarification: true })
+            {
+                plan.ClarificationQuestion = clarification.Question;
+                plan.ClarificationOptions = clarification.Options;
+                plan.ClarificationReason = clarification.Reason;
+
+                var clarifyStep = new AgentStep
+                {
+                    Type = AgentStepType.Thought,
+                    Content = $"[Clarification needed: {clarification.Reason}] {clarification.Question}"
+                };
+                plan.Steps.Add(clarifyStep);
+                OnStepExecuted?.Invoke(clarifyStep);
+            }
+
+            if (analysis.IsAmbiguous)
+            {
+                try
+                {
+                    analysis = await _queryPreprocessor.AnalyzeDeepAsync(userMessage, cancellationToken);
+                }
+                catch { /* keep fast analysis */ }
+            }
+        }
+
         var userMsg = ChatMessage.FromUser(userMessage);
         _history.Add(userMsg);
         _memory?.OnUserMessage(userMessage);
 
+        // --- Phase 2: Context + Skill Routing ---
         var context = await _contextManager.GatherContextAsync();
-        var toolDefs = _promptBuilder.BuildToolDefinitions(_skillRegistry.GetAllDescriptors());
+        var allSkills = _skillRegistry.GetAllDescriptors().ToList();
 
+        List<SkillDescriptor> filteredSkills;
+        if (_skillRouter != null && analysis != null)
+        {
+            filteredSkills = await _skillRouter.RouteAsync(
+                userMessage, analysis, allSkills, 12, cancellationToken);
+        }
+        else
+        {
+            filteredSkills = allSkills;
+        }
+
+        var toolDefs = _adaptivePromptBuilder?.BuildToolDefinitions(filteredSkills)
+            ?? _promptBuilder.BuildToolDefinitions(filteredSkills);
+
+        // --- Phase 3: Adaptive Prompt Building ---
         var systemPrompt = BuildReActSystemPrompt();
         var messages = new List<ChatMessage> { ChatMessage.FromSystem(systemPrompt) };
+
+        if (_adaptivePromptBuilder != null && analysis != null)
+        {
+            var analysisHint = $"--- QUERY UNDERSTANDING ---\n{analysis.GetPromptHint()}\n";
+            var examples = FewShotIntentLibrary.GetRelevantExamples(analysis, 4);
+            var fewShotBlock = FewShotIntentLibrary.FormatExamplesForPrompt(examples);
+            if (!string.IsNullOrEmpty(fewShotBlock))
+                analysisHint += $"\n{fewShotBlock}\n";
+            messages.Add(ChatMessage.FromSystem(analysisHint));
+        }
 
         var codeGenContext = BuildCodeGenContext();
         if (!string.IsNullOrWhiteSpace(codeGenContext))

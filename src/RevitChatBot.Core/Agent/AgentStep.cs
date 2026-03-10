@@ -25,4 +25,8 @@ public class AgentPlan
     public bool RequiresConfirmation { get; set; }
     public bool IsCompleted { get; set; }
     public string? FinalAnswer { get; set; }
+    public string? ClarificationQuestion { get; set; }
+    public List<string>? ClarificationOptions { get; set; }
+    public string? ClarificationReason { get; set; }
+    public bool NeedsClarification => ClarificationQuestion != null;
 }

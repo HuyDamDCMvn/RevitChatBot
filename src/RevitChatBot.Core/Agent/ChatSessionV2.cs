@@ -25,6 +25,7 @@ public class ChatSessionV2
     private const int PersistEveryNMessages = 5;
 
     public IReadOnlyList<ChatMessage> History => _agent.History;
+    public AgentPlan? LastPlan { get; private set; }
 
     public event Action<AgentStep>? OnAgentStep;
     public event Action<string>? OnStreamChunk;
@@ -40,7 +41,10 @@ public class ChatSessionV2
         MemoryManager? memory = null,
         CodeGenLibrary? codeGenLibrary = null,
         DynamicSkillRegistry? dynamicSkillRegistry = null,
-        CodePatternLearning? patternLearning = null)
+        CodePatternLearning? patternLearning = null,
+        QueryPreprocessor? queryPreprocessor = null,
+        AdaptivePromptBuilder? adaptivePromptBuilder = null,
+        SemanticSkillRouter? skillRouter = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
@@ -49,7 +53,8 @@ public class ChatSessionV2
 
         _agent = new AgentOrchestrator(
             ollama, skillRegistry, skillExecutor, contextManager, _promptBuilder, memory,
-            codeGenLibrary, dynamicSkillRegistry, patternLearning);
+            codeGenLibrary, dynamicSkillRegistry, patternLearning,
+            queryPreprocessor, adaptivePromptBuilder, skillRouter);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }
@@ -88,6 +93,7 @@ public class ChatSessionV2
             try
             {
                 var plan = await _agent.ExecuteAsync(userMessage, cancellationToken);
+                LastPlan = plan;
                 result = plan.FinalAnswer ?? "No response generated.";
             }
             finally

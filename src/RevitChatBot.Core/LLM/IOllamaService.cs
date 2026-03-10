@@ -6,9 +6,9 @@ public class OllamaOptions
 {
     public string BaseUrl { get; set; } = "http://localhost:11434";
     public string Model { get; set; } = "qwen2.5:7b";
-    public double Temperature { get; set; } = 0.7;
-    public int? NumCtx { get; set; } = 4096;
-    public string? KeepAlive { get; set; } = "5m";
+    public double Temperature { get; set; } = 0.3;
+    public int? NumCtx { get; set; } = 8192;
+    public string? KeepAlive { get; set; } = "10m";
     public bool? Think { get; set; }
 }
 
@@ -23,9 +23,21 @@ public interface IOllamaService
         List<ChatMessage> messages,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Call /api/generate with structured output (format parameter).
+    /// Returns raw response text. Useful for intent extraction, structured analysis.
+    /// </summary>
+    Task<string> GenerateAsync(
+        string prompt,
+        string? formatJson = null,
+        double? temperature = null,
+        int? numCtx = null,
+        CancellationToken cancellationToken = default);
+
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
     Task<List<OllamaModel>> ListModelsAsync(CancellationToken cancellationToken = default);
     void UpdateOptions(Action<OllamaOptions> configure);
+    OllamaOptions GetCurrentOptions();
 }
 
 public class OllamaModel

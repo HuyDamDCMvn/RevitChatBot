@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -58,6 +59,7 @@ public class WebViewBridge : IDisposable
         RegisterMEPComponents(skillRegistry, contextManager);
         RegisterKnowledge(skillRegistry, contextManager);
         RegisterDynamicCode(skillRegistry);
+        InitializeQueryUnderstanding(skillRegistry);
 
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
 
@@ -66,7 +68,10 @@ public class WebViewBridge : IDisposable
             memory: _memoryManager,
             codeGenLibrary: _codeGenLibrary,
             dynamicSkillRegistry: _dynamicSkillRegistry,
-            patternLearning: _patternLearning);
+            patternLearning: _patternLearning,
+            queryPreprocessor: _queryPreprocessor,
+            adaptivePromptBuilder: _adaptivePromptBuilder,
+            skillRouter: _skillRouter);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -167,6 +172,9 @@ public class WebViewBridge : IDisposable
     private DynamicSkillRegistry? _dynamicSkillRegistry;
     private CodePatternLearning? _patternLearning;
     private DynamicCodeExecutor? _codeExecutor;
+    private QueryPreprocessor? _queryPreprocessor;
+    private AdaptivePromptBuilder? _adaptivePromptBuilder;
+    private SemanticSkillRouter? _skillRouter;
 
     private void RegisterDynamicCode(SkillRegistry registry)
     {
@@ -206,6 +214,56 @@ public class WebViewBridge : IDisposable
         {
             // Dynamic code module is non-critical
         }
+    }
+
+    private void InitializeQueryUnderstanding(SkillRegistry skillRegistry)
+    {
+        try
+        {
+            var opts = _ollamaService!.GetCurrentOptions();
+            _queryPreprocessor = new QueryPreprocessor(
+                new HttpClient
+                {
+                    BaseAddress = new Uri(opts.BaseUrl),
+                    Timeout = TimeSpan.FromSeconds(30)
+                },
+                opts.Model);
+
+            _adaptivePromptBuilder = new AdaptivePromptBuilder();
+
+            var embeddingAdapter = new OllamaEmbeddingAdapter(new OllamaEmbeddingService());
+            _skillRouter = new SemanticSkillRouter(embeddingAdapter);
+
+            _ = InitializeSkillRouterAsync(skillRegistry);
+        }
+        catch
+        {
+            // Non-critical — fall back to default behavior
+        }
+    }
+
+    /// <summary>
+    /// Adapter bridging Knowledge.Embeddings.IEmbeddingService → Core.LLM.ISkillEmbeddingProvider.
+    /// </summary>
+    private class OllamaEmbeddingAdapter : ISkillEmbeddingProvider, IDisposable
+    {
+        private readonly OllamaEmbeddingService _inner;
+        public OllamaEmbeddingAdapter(OllamaEmbeddingService inner) => _inner = inner;
+        public Task<float[]> GetEmbeddingAsync(string text, CancellationToken ct)
+            => _inner.GetEmbeddingAsync(text, ct);
+        public Task<List<float[]>> GetEmbeddingsAsync(List<string> texts, CancellationToken ct)
+            => _inner.GetEmbeddingsAsync(texts, ct);
+        public void Dispose() => _inner.Dispose();
+    }
+
+    private async Task InitializeSkillRouterAsync(SkillRegistry skillRegistry)
+    {
+        try
+        {
+            if (_skillRouter != null)
+                await _skillRouter.InitializeAsync(skillRegistry.GetAllDescriptors());
+        }
+        catch { /* Non-critical */ }
     }
 
     private async Task InitializeKnowledgeAsync()
@@ -328,6 +386,22 @@ public class WebViewBridge : IDisposable
             _knowledgeContextProvider?.SetQuery(content);
 
             var response = await _chatSession.SendMessageAsync(content);
+
+            var lastPlan = _chatSession.LastPlan;
+            if (lastPlan is { NeedsClarification: true })
+            {
+                SendToUI(new BridgeMessage
+                {
+                    Type = BridgeMessageTypes.ClarificationRequest,
+                    Content = lastPlan.ClarificationQuestion,
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["options"] = lastPlan.ClarificationOptions,
+                        ["reason"] = lastPlan.ClarificationReason
+                    }
+                });
+            }
+
             SendToUI(new BridgeMessage
             {
                 Type = BridgeMessageTypes.AssistantMessage,

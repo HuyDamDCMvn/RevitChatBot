@@ -105,11 +105,47 @@ public class OllamaService : IOllamaService, IDisposable
         return models;
     }
 
+    public async Task<string> GenerateAsync(
+        string prompt,
+        string? formatJson = null,
+        double? temperature = null,
+        int? numCtx = null,
+        CancellationToken cancellationToken = default)
+    {
+        var root = new JsonObject
+        {
+            ["model"] = _options.Model,
+            ["prompt"] = prompt,
+            ["stream"] = false,
+            ["options"] = new JsonObject
+            {
+                ["temperature"] = temperature ?? 0.1,
+                ["num_ctx"] = numCtx ?? 2048
+            }
+        };
+
+        if (formatJson != null)
+        {
+            var formatNode = JsonNode.Parse(formatJson);
+            if (formatNode != null)
+                root["format"] = formatNode;
+        }
+
+        var content = new StringContent(root.ToJsonString(), Encoding.UTF8, "application/json");
+        var response = await _httpClient.PostAsync("/api/generate", content, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var node = JsonNode.Parse(json);
+        return node?["response"]?.GetValue<string>() ?? "";
+    }
+
     public void UpdateOptions(Action<OllamaOptions> configure)
     {
         configure(_options);
         _httpClient.BaseAddress = new Uri(_options.BaseUrl);
     }
+
+    public OllamaOptions GetCurrentOptions() => _options;
 
     private string BuildChatPayload(
         List<ChatMessage> messages,

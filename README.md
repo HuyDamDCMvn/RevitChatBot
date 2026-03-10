@@ -1,6 +1,6 @@
 # Revit MEP ChatBot
 
-An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence and self-learning, and a **React** UI rendered via WebView2.
+An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence and self-learning, **smart query understanding** (bilingual intent/entity extraction, adaptive prompting, semantic skill routing, few-shot examples, clarification flow), and a **React** UI rendered via WebView2.
 
 ## Architecture Overview
 
@@ -24,6 +24,14 @@ graph TB
         SR[SkillRegistry]
         SE[SkillExecutor]
         CM[ContextManager]
+        subgraph QueryUnderstanding [Query Understanding - Smart NLU]
+            QP[QueryPreprocessor<br/>intent+entity extraction]
+            APB[AdaptivePromptBuilder<br/>dynamic system prompt]
+            SSR[SemanticSkillRouter<br/>embedding-based routing]
+            MG[MepGlossary<br/>VI↔EN terminology]
+            CF[ClarificationFlow<br/>ambiguity handling]
+            FSI[FewShotIntentLibrary<br/>curated examples]
+        end
         subgraph CodeGenSub [CodeGen - Roslyn Runtime + Self-Evolving]
             RCC[RoslynCodeCompiler]
             DCE[DynamicCodeExecutor]
@@ -94,7 +102,7 @@ graph TB
     end
 
     subgraph OllamaServer [Ollama - localhost:11434]
-        LLM["qwen2.5:7b<br/>/api/chat"]
+        LLM["qwen2.5:7b<br/>/api/chat + /api/generate"]
         EMB["nomic-embed-text<br/>/api/embed"]
     end
 
@@ -398,7 +406,7 @@ RevitChatBot.slnx
 │   │   ├── Agent/                        # AgentOrchestrator (ReAct), ChatSessionV2, AgentStep
 │   │   ├── CodeGen/                      # RoslynCodeCompiler, DynamicCodeExecutor, DynamicCodeSkill, CodeSecurityValidator, RevitApiCheatSheet, CodeExamplesLibrary, CodeGenLibrary, DynamicSkillRegistry, CodePatternLearning
 │   │   ├── Memory/                       # MemoryManager, ConversationStore, ConversationSummarizer, LearnedFactsStore, UserPreferencesStore, SessionAnalytics, MemoryContextProvider
-│   │   ├── LLM/                          # OllamaService, ChatSession, PromptBuilder
+│   │   ├── LLM/                          # OllamaService, PromptBuilder, MepGlossary, QueryPreprocessor, AdaptivePromptBuilder, SemanticSkillRouter, ClarificationFlow, FewShotIntentLibrary
 │   │   ├── Skills/                       # ISkill, SkillAttribute, SkillRegistry, SkillExecutor
 │   │   ├── Context/                      # IContextProvider, ContextManager, ContextData
 │   │   └── Models/                       # ChatMessage, BridgeMessage, ToolCall
@@ -737,8 +745,58 @@ memory/
 4. **Fact is persisted** to `learned_facts.json`
 5. **Next session**: fact is injected into `[learned_facts]` context, LLM remembers
 
+## Query Understanding & Adaptive Prompting
+
+The chatbot preprocesses every user query through a multi-stage pipeline for accurate intent resolution:
+
+```mermaid
+flowchart LR
+    A["User Query<br/>(VI or EN)"] --> B["MepGlossary<br/>Normalize VI→EN"]
+    B --> C["QueryPreprocessor<br/>(fast: keyword)"]
+    C --> D{Ambiguous?}
+    D -->|Yes| E["QueryPreprocessor<br/>(deep: /api/generate<br/>structured output)"]
+    D -->|No| F["QueryAnalysis"]
+    E --> F
+    F --> G["ClarificationFlow<br/>Ask if needed"]
+    F --> H["SemanticSkillRouter<br/>Filter top-K skills<br/>via embeddings"]
+    F --> I["FewShotIntentLibrary<br/>Select 3-5 examples"]
+    F --> J["AdaptivePromptBuilder<br/>Intent-specific prompt"]
+    G & H & I & J --> K["AgentOrchestrator<br/>ReAct execution"]
+```
+
+### Six Modules
+
+| Module | File | Purpose |
+|---|---|---|
+| **MepGlossary** | `LLM/MepGlossary.cs` | 120+ bilingual (VI↔EN) MEP term mappings. Normalizes "ống gió" → "duct", "va chạm" → "clash". Also detects intent, category, system type, level, and element IDs from text. |
+| **QueryPreprocessor** | `LLM/QueryPreprocessor.cs` | Two-tier analysis: fast (keyword-based, ~0ms) and deep (Ollama `/api/generate` with structured JSON output, ~200ms). Deep analysis only triggers for ambiguous queries. |
+| **FewShotIntentLibrary** | `LLM/FewShotIntentLibrary.cs` | 40+ curated few-shot examples mapping user queries to expected skill calls. Ranked by intent+category match and injected into context (3-5 examples per query). |
+| **AdaptivePromptBuilder** | `LLM/AdaptivePromptBuilder.cs` | Constructs intent-specific system prompts. Query mode gets query guidance; Check mode gets QA/QC workflow; Modify mode gets confirmation rules; Calculate mode gets formulas. Reduces prompt size by ~40%. |
+| **SemanticSkillRouter** | `LLM/SemanticSkillRouter.cs` | Pre-computes embeddings for all skill descriptions. Routes queries to top-K most relevant skills (cosine similarity), falling back to keyword matching. Reduces tool list from 25+ to ~10 per call. |
+| **ClarificationFlow** | `LLM/ClarificationFlow.cs` | Detects when user query is too vague and generates bilingual clarification questions with options (e.g., "Which MEP element type?" with choices). Enriches query with user's response. |
+
+### Ollama API Optimizations
+
+| Setting | Before | After | Impact |
+|---|---|---|---|
+| `Temperature` | 0.7 | 0.3 | More deterministic, better tool selection |
+| `NumCtx` | 4096 | 8192 | Fits longer context (model inventory + few-shot + codegen history) |
+| `KeepAlive` | 5m | 10m | Model stays loaded longer between queries |
+| `/api/generate` | Not used | Used for structured intent extraction | JSON schema output for precise entity extraction |
+
+### Query Processing Pipeline
+
+1. **User types**: "kiểm tra bảo ôn ống lạnh tầng 2"
+2. **MepGlossary**: Normalizes → "check insulation chilled_water_pipe Level 2"
+3. **QueryPreprocessor (fast)**: `{intent: "check", category: "pipe", systemType: "ChilledWater", level: "Level 2"}`
+4. **FewShotIntentLibrary**: Selects 4 matching examples → `check_insulation(system_filter="ChilledWater")`
+5. **SemanticSkillRouter**: Ranks skills → `[check_insulation, query_elements, check_duct_velocity, ...]`
+6. **AdaptivePromptBuilder**: Uses "Check Mode" prompt with red flags and QA workflow
+7. **AgentOrchestrator**: LLM correctly calls `check_insulation` with `system_filter="ChilledWater"` and `level_name="Level 2"`
+
 ## References
 
 - [Revit API 2025.3 Docs](https://www.revitapidocs.com/2025.3/)
 - [Ollama GitHub + API Docs](https://github.com/ollama/ollama)
+- [Ollama REST API - /api/generate](https://docs.ollama.com/api/generate) — structured output, thinking mode
 - [WebView2 Documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/)
