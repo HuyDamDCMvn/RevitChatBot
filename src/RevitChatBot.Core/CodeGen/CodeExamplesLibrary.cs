@@ -1272,5 +1272,357 @@ public static class CodeExamplesLibrary
             }
         }
         ```
+
+        ### EXAMPLE 31: Connector-centric analysis — flow, pressure, area per connector (OpenMEP pattern)
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                long elemId = 123456; // Replace with actual ID
+                var elem = doc.GetElement(new ElementId(elemId));
+                if (elem == null) return $"Element {elemId} not found.";
+
+                ConnectorManager cm = null;
+                if (elem is MEPCurve mc) cm = mc.ConnectorManager;
+                else if (elem is FamilyInstance fi) cm = fi.MEPModel?.ConnectorManager;
+                if (cm == null) return "No connectors found.";
+
+                var lines = new List<string> { $"Connectors for {elem.Category?.Name} ID:{elemId}:" };
+                int idx = 0;
+                foreach (Connector c in cm.Connectors)
+                {
+                    string shape = c.Shape.ToString();
+                    double areaSqFt = c.Shape switch {
+                        ConnectorProfileType.Round => Math.PI * c.Radius * c.Radius,
+                        ConnectorProfileType.Rectangular => c.Width * c.Height,
+                        ConnectorProfileType.Oval => Math.PI * c.Width * c.Height / 4,
+                        _ => 0
+                    };
+                    double areaMm2 = areaSqFt * 92903.04;
+                    string conn = c.IsConnected ? "Connected" : "Open";
+                    var dir = c.CoordinateSystem.BasisZ;
+                    lines.Add($"  [{idx}] {shape} {conn} area={Math.Round(areaMm2)}mm² " +
+                        $"pos=({Math.Round(c.Origin.X*304.8)},{Math.Round(c.Origin.Y*304.8)},{Math.Round(c.Origin.Z*304.8)})mm " +
+                        $"dir=({dir.X:F2},{dir.Y:F2},{dir.Z:F2})");
+                    if (c.Domain == Domain.DomainHvac || c.Domain == Domain.DomainPiping)
+                        lines.Add($"       flow={Math.Round(c.Flow, 3)} pressureDrop={Math.Round(c.PressureDrop, 3)}");
+                    idx++;
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 32: Create Tee fitting with correct connector ordering (OpenMEP pattern)
+        ```csharp
+        using System;
+        using System.Linq;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                long mainId = 111111, branchId = 222222; // Replace with actual IDs
+                var mainElem = doc.GetElement(new ElementId(mainId)) as MEPCurve;
+                var branchElem = doc.GetElement(new ElementId(branchId)) as MEPCurve;
+                if (mainElem == null || branchElem == null) return "Elements not found (must be MEPCurve).";
+
+                var mainConns = new List<Connector>();
+                foreach (Connector c in mainElem.ConnectorManager.Connectors)
+                    if (!c.IsConnected) mainConns.Add(c);
+                var branchConns = new List<Connector>();
+                foreach (Connector c in branchElem.ConnectorManager.Connectors)
+                    if (!c.IsConnected) branchConns.Add(c);
+
+                if (mainConns.Count < 2 || branchConns.Count < 1)
+                    return "Need 2 open connectors on main + 1 on branch.";
+
+                var branchConn = branchConns.OrderBy(c => c.Origin.DistanceTo(mainConns[0].Origin)).First();
+
+                using var tx = new Transaction(doc, "Create Tee");
+                tx.Start();
+                try
+                {
+                    var tee = doc.Create.NewTeeFitting(mainConns[0], mainConns[1], branchConn);
+                    tx.Commit();
+                    return tee != null ? $"Tee fitting created: ID:{tee.Id}" : "Failed.";
+                }
+                catch (Exception ex) { tx.RollBack(); return $"Error: {ex.Message}"; }
+            }
+        }
+        ```
+
+        ### EXAMPLE 33: Query routing preferences for pipe/duct types
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using Autodesk.Revit.DB.Plumbing;
+        using Autodesk.Revit.DB.Mechanical;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var lines = new List<string> { "=== Routing Preferences ===" };
+
+                var pipeTypes = new FilteredElementCollector(doc)
+                    .OfClass(typeof(PipeType)).Cast<PipeType>().ToList();
+                lines.Add($"\nPipe Types ({pipeTypes.Count}):");
+                foreach (var pt in pipeTypes)
+                {
+                    var rpm = pt.RoutingPreferenceManager;
+                    var groups = new[] {
+                        ("Segments", RoutingPreferenceRuleGroupType.Segments),
+                        ("Elbows", RoutingPreferenceRuleGroupType.Elbows),
+                        ("Junctions", RoutingPreferenceRuleGroupType.Junctions),
+                        ("Crosses", RoutingPreferenceRuleGroupType.Crosses),
+                        ("Transitions", RoutingPreferenceRuleGroupType.Transitions)
+                    };
+                    var details = new List<string>();
+                    foreach (var (name, grp) in groups)
+                    {
+                        int count = rpm.GetNumberOfRules(grp);
+                        if (count > 0)
+                        {
+                            var rule = rpm.GetRule(grp, 0);
+                            var fitting = doc.GetElement(rule.MEPPartId);
+                            details.Add($"{name}:{count}({fitting?.Name ?? "?"})");
+                        }
+                    }
+                    string juncType = rpm.PreferredJunctionType.ToString();
+                    lines.Add($"  {pt.Name}: {juncType} [{string.Join(", ", details)}]");
+                }
+
+                var ductTypes = new FilteredElementCollector(doc)
+                    .OfClass(typeof(DuctType)).Cast<DuctType>().ToList();
+                lines.Add($"\nDuct Types ({ductTypes.Count}):");
+                foreach (var dt in ductTypes)
+                {
+                    var rpm = dt.RoutingPreferenceManager;
+                    int elbows = rpm.GetNumberOfRules(RoutingPreferenceRuleGroupType.Elbows);
+                    int trans = rpm.GetNumberOfRules(RoutingPreferenceRuleGroupType.Transitions);
+                    lines.Add($"  {dt.Name}: Elbows:{elbows}, Transitions:{trans}");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 34: Split Conduit/CableTray using CopyElement workaround
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using Autodesk.Revit.DB.Electrical;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                long targetId = 123456; // Replace with actual element ID
+                double splitDistMm = 2000; // 2 meter segments
+                var elem = doc.GetElement(new ElementId(targetId));
+                if (elem == null) return "Element not found.";
+                if (elem is not Conduit && elem is not CableTray) return "Not a Conduit or CableTray.";
+                if (elem.Location is not LocationCurve lc) return "Not a curve element.";
+
+                double splitFt = splitDistMm / 304.8;
+                var start = lc.Curve.GetEndPoint(0);
+                var end = lc.Curve.GetEndPoint(1);
+                double totalLen = start.DistanceTo(end);
+                int numSplits = (int)(totalLen / splitFt);
+                if (numSplits <= 0) return "Element shorter than split distance.";
+
+                using var tx = new Transaction(doc, "Split Conduit/CableTray");
+                tx.Start();
+                var dir = (end - start).Normalize();
+                var segments = new List<ElementId> { elem.Id };
+
+                for (int i = 1; i <= numSplits; i++)
+                {
+                    var splitPt = start + dir * (splitFt * i);
+                    var curElem = doc.GetElement(segments[^1]);
+                    var curLc = (LocationCurve)curElem.Location;
+                    var curEnd = curLc.Curve.GetEndPoint(1);
+
+                    var copiedIds = ElementTransformUtils.CopyElement(doc, curElem.Id, XYZ.Zero);
+                    var copy = doc.GetElement(copiedIds.First());
+
+                    curLc.Curve = Line.CreateBound(curLc.Curve.GetEndPoint(0), splitPt);
+                    ((LocationCurve)copy.Location).Curve = Line.CreateBound(splitPt, curEnd);
+                    segments.Add(copy.Id);
+                }
+                tx.Commit();
+                return $"Split into {segments.Count} segments (CopyElement workaround).";
+            }
+        }
+        ```
+
+        ### EXAMPLE 35: Full MEP system graph traversal with statistics
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                long startId = 123456; // Replace with actual element ID
+                var startElem = doc.GetElement(new ElementId(startId));
+                if (startElem == null) return $"Element {startId} not found.";
+
+                var visited = new HashSet<long>();
+                var queue = new Queue<(Element elem, int depth)>();
+                queue.Enqueue((startElem, 0));
+                visited.Add(startElem.Id.Value);
+
+                var catCount = new Dictionary<string, int>();
+                int openEnds = 0, maxDepth = 0;
+                double totalLenFt = 0;
+                var connPairs = new List<string>();
+
+                while (queue.Count > 0 && visited.Count < 500)
+                {
+                    var (elem, depth) = queue.Dequeue();
+                    if (depth > maxDepth) maxDepth = depth;
+                    string cat = elem.Category?.Name ?? "Unknown";
+                    catCount[cat] = catCount.GetValueOrDefault(cat) + 1;
+
+                    if (elem.Location is LocationCurve lc)
+                        totalLenFt += lc.Curve.Length;
+
+                    ConnectorManager cm = null;
+                    if (elem is MEPCurve mc) cm = mc.ConnectorManager;
+                    else if (elem is FamilyInstance fi) cm = fi.MEPModel?.ConnectorManager;
+                    if (cm == null) continue;
+
+                    foreach (Connector c in cm.Connectors)
+                    {
+                        if (!c.IsConnected) { openEnds++; continue; }
+                        foreach (Connector other in c.AllRefs)
+                        {
+                            if (other?.Owner == null) continue;
+                            if (other.ConnectorType == ConnectorType.Logical) continue;
+                            if (visited.Add(other.Owner.Id.Value))
+                            {
+                                queue.Enqueue((other.Owner, depth + 1));
+                                connPairs.Add($"{elem.Id}->{other.Owner.Id}");
+                            }
+                        }
+                    }
+                }
+
+                var lines = new List<string> {
+                    $"MEP System Graph from ID:{startId}",
+                    $"  Total elements: {visited.Count}",
+                    $"  Max depth: {maxDepth}",
+                    $"  Open ends: {openEnds}",
+                    $"  Total length: {Math.Round(totalLenFt * 0.3048, 1)}m",
+                    $"\n  By category:"
+                };
+                foreach (var kv in catCount.OrderByDescending(x => x.Value))
+                    lines.Add($"    {kv.Key}: {kv.Value}");
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 36: Robust unit conversion for MEP calculations
+        ```csharp
+        using System;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                double diameterMm = 150;
+                double velocityMs = 2.5;
+                double slopePct = 1.0;
+
+                double diaFt = UnitUtils.ConvertToInternalUnits(diameterMm, UnitTypeId.Millimeters);
+                double velFtS = UnitUtils.ConvertToInternalUnits(velocityMs, UnitTypeId.MetersPerSecond);
+                double slopeRatio = slopePct / 100.0;
+
+                double areaSqFt = Math.PI * diaFt * diaFt / 4.0;
+                double flowCuFtS = areaSqFt * velFtS;
+                double flowLps = UnitUtils.ConvertFromInternalUnits(flowCuFtS, UnitTypeId.LitersPerSecond);
+
+                double diaMm = UnitUtils.ConvertFromInternalUnits(diaFt, UnitTypeId.Millimeters);
+                double velMs = UnitUtils.ConvertFromInternalUnits(velFtS, UnitTypeId.MetersPerSecond);
+
+                return $"Pipe calculation:\n" +
+                    $"  Diameter: {diaMm}mm ({Math.Round(diaFt * 12, 2)}in)\n" +
+                    $"  Velocity: {velMs}m/s ({Math.Round(velFtS, 2)}ft/s)\n" +
+                    $"  Flow: {Math.Round(flowLps, 2)}L/s\n" +
+                    $"  Slope: {slopePct}% (ratio={slopeRatio})";
+            }
+        }
+        ```
+
+        ### EXAMPLE 37: Find connected elements along a path with connector info
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                long startId = 123456; // Replace with actual ID
+                var elem = doc.GetElement(new ElementId(startId));
+                if (elem == null) return $"Element {startId} not found.";
+
+                var path = new List<string>();
+                var visited = new HashSet<long> { elem.Id.Value };
+                var current = elem;
+
+                for (int step = 0; step < 50; step++)
+                {
+                    ConnectorManager cm = null;
+                    if (current is MEPCurve mc) cm = mc.ConnectorManager;
+                    else if (current is FamilyInstance fi) cm = fi.MEPModel?.ConnectorManager;
+                    if (cm == null) break;
+
+                    string size = current.get_Parameter(BuiltInParameter.RBS_CALCULATED_SIZE)?.AsString() ?? "";
+                    path.Add($"  [{step}] {current.Category?.Name} ID:{current.Id} {size}");
+
+                    Element next = null;
+                    foreach (Connector c in cm.Connectors)
+                    {
+                        if (!c.IsConnected) continue;
+                        foreach (Connector other in c.AllRefs)
+                        {
+                            if (other?.Owner != null && other.ConnectorType != ConnectorType.Logical
+                                && visited.Add(other.Owner.Id.Value))
+                            {
+                                path.Add($"       → via connector ({c.Shape} {c.Domain})");
+                                next = other.Owner;
+                                goto foundNext;
+                            }
+                        }
+                    }
+                    foundNext:
+                    if (next == null) { path.Add("  [END] No more connected elements."); break; }
+                    current = next;
+                }
+                return $"Path from ID:{startId} ({path.Count/2} elements):\n" + string.Join("\n", path);
+            }
+        }
+        ```
         """;
 }

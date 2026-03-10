@@ -1,0 +1,15 @@
+feat: OpenMEP-inspired upgrades - 7 items
+
+1. Connector Knowledge: universal access (MEPCurve/FamilyInstance/FabricationPart),
+   properties (flow, pressure, area, direction), closest/farthest patterns
+2. Fitting Creation Mastery: Tee/Cross/Transition/Takeoff/Union with
+   correct connector ordering (colinear main + perpendicular branch)
+3. Routing Preferences: new query_routing_preferences skill + cheat sheet
+4. Unit Conversion: SpecTypeId mapping table, robust UnitUtils patterns
+5. Conduit/CableTray Break: CopyElement workaround in SplitDuctPipeSkill
+6. MEP System Graph Traversal: new traverse_mep_system skill with BFS,
+   domain filtering, path tracing, FabricationPart support
+7. RAG Knowledge: mep-connector-knowledge.md - comprehensive reference
+
+New: TraverseMepSystemSkill, RoutingPreferencesSkill, mep-connector-knowledge.md
+Updated: CheatSheet, CodeExamples(+7), AgentOrchestrator, PromptBuilder, SplitDuctPipe, README

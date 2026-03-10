@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
@@ -6,12 +7,13 @@ using RevitChatBot.Core.Skills;
 namespace RevitChatBot.MEP.Skills.Modify;
 
 [Skill("split_duct_pipe",
-    "Split ducts or pipes into equal segments at a specified distance. Automatically creates " +
-    "union fittings between adjacent segments and numbers each segment sequentially into a " +
-    "chosen parameter. Supports splitting from start-to-end or end-to-start direction.")]
+    "Split ducts, pipes, conduits, or cable trays into equal segments at a specified distance. " +
+    "Automatically creates union fittings between adjacent segments (duct/pipe) and numbers " +
+    "each segment sequentially. Conduit and cable tray use CopyElement workaround since " +
+    "BreakCurve is not available for these categories.")]
 [SkillParameter("category", "string",
-    "Element type to split: duct or pipe",
-    isRequired: true, allowedValues: ["duct", "pipe"])]
+    "Element type to split: duct, pipe, conduit, or cable_tray",
+    isRequired: true, allowedValues: ["duct", "pipe", "conduit", "cable_tray"])]
 [SkillParameter("split_distance_mm", "number",
     "Split distance in mm (e.g., 1000 = 1 meter segments)", isRequired: true)]
 [SkillParameter("direction", "string",
@@ -131,9 +133,13 @@ public class SplitDuctPipeSkill : ISkill
                 .ToList()!;
         }
 
-        var bic = category == "pipe"
-            ? BuiltInCategory.OST_PipeCurves
-            : BuiltInCategory.OST_DuctCurves;
+        var bic = category switch
+        {
+            "pipe" => BuiltInCategory.OST_PipeCurves,
+            "conduit" => BuiltInCategory.OST_Conduit,
+            "cable_tray" => BuiltInCategory.OST_CableTray,
+            _ => BuiltInCategory.OST_DuctCurves
+        };
 
         var elements = new FilteredElementCollector(doc)
             .OfCategory(bic)
@@ -177,33 +183,56 @@ public class SplitDuctPipeSkill : ISkill
 
         if (splitPoints.Count == 0) return new SplitResult(1, 0);
 
-        bool isDuct = category == "duct";
+        bool useBreakCurve = category is "duct" or "pipe";
         var segmentsAfterSplit = new List<ElementId>();
-        var currentElemId = elem.Id;
 
-        foreach (var pt in splitPoints)
+        if (useBreakCurve)
         {
-            ElementId newId;
-            if (isDuct)
-                newId = MechanicalUtils.BreakCurve(doc, currentElemId, pt);
-            else
-                newId = PlumbingUtils.BreakCurve(doc, currentElemId, pt);
+            bool isDuct = category == "duct";
+            var currentElemId = elem.Id;
+
+            foreach (var pt in splitPoints)
+            {
+                ElementId newId = isDuct
+                    ? MechanicalUtils.BreakCurve(doc, currentElemId, pt)
+                    : PlumbingUtils.BreakCurve(doc, currentElemId, pt);
+
+                if (fromStart)
+                    segmentsAfterSplit.Add(newId);
+                else
+                {
+                    segmentsAfterSplit.Add(currentElemId);
+                    currentElemId = newId;
+                }
+            }
 
             if (fromStart)
-            {
-                segmentsAfterSplit.Add(newId);
-            }
-            else
-            {
                 segmentsAfterSplit.Add(currentElemId);
-                currentElemId = newId;
+            else
+                segmentsAfterSplit.Insert(0, currentElemId);
+        }
+        else
+        {
+            segmentsAfterSplit.Add(elem.Id);
+            var orderedPts = fromStart
+                ? splitPoints.ToList()
+                : splitPoints.AsEnumerable().Reverse().ToList();
+
+            foreach (var pt in orderedPts)
+            {
+                var curElem = doc.GetElement(segmentsAfterSplit[^1]);
+                var curLc = (LocationCurve)curElem.Location;
+                var curStart = curLc.Curve.GetEndPoint(0);
+                var curEnd = curLc.Curve.GetEndPoint(1);
+
+                var copiedIds = ElementTransformUtils.CopyElement(doc, curElem.Id, XYZ.Zero);
+                var copyId = copiedIds.First();
+
+                curLc.Curve = Line.CreateBound(curStart, pt);
+                ((LocationCurve)doc.GetElement(copyId).Location).Curve = Line.CreateBound(pt, curEnd);
+                segmentsAfterSplit.Add(copyId);
             }
         }
-
-        if (fromStart)
-            segmentsAfterSplit.Add(currentElemId);
-        else
-            segmentsAfterSplit.Insert(0, currentElemId);
 
         for (int idx = 0; idx < segmentsAfterSplit.Count; idx++)
         {
@@ -227,14 +256,17 @@ public class SplitDuctPipeSkill : ISkill
         }
 
         int fittings = 0;
-        for (int i = 0; i < segmentsAfterSplit.Count - 1; i++)
+        if (useBreakCurve)
         {
-            try
+            for (int i = 0; i < segmentsAfterSplit.Count - 1; i++)
             {
-                var fitting = CreateUnionFitting(doc, segmentsAfterSplit[i], segmentsAfterSplit[i + 1]);
-                if (fitting is not null) fittings++;
+                try
+                {
+                    var fitting = CreateUnionFitting(doc, segmentsAfterSplit[i], segmentsAfterSplit[i + 1]);
+                    if (fitting is not null) fittings++;
+                }
+                catch { /* fitting creation can fail if routing prefs missing */ }
             }
-            catch { /* fitting creation can fail if routing prefs missing */ }
         }
 
         return new SplitResult(segmentsAfterSplit.Count, fittings);

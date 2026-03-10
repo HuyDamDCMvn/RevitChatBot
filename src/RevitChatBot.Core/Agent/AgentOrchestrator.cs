@@ -270,11 +270,34 @@ public class AgentOrchestrator
             - Uses IsPointInRoom/IsPointInSpace API (most accurate method).
             - above_offset_mm for ceiling-mounted elements (e.g., 1000mm for above-ceiling duct).
 
-            ## SPLIT DUCT/PIPE
-            - Use 'split_duct_pipe' to divide ducts/pipes into equal segments.
-            - Automatically creates union fittings between segments.
+            ## SPLIT DUCT/PIPE/CONDUIT/CABLE TRAY
+            - Use 'split_duct_pipe' to divide ducts, pipes, conduits, or cable trays into equal segments.
+            - Duct/Pipe: uses BreakCurve + union fittings.
+            - Conduit/CableTray: uses CopyElement workaround (BreakCurve not supported).
             - Numbers each segment sequentially in the chosen parameter.
             - Confirm before executing — this modifies the model significantly.
+
+            ## MEP SYSTEM GRAPH TRAVERSAL
+            - Use 'traverse_mep_system' to explore full system topology from any starting element.
+            - Returns: element count, max depth, open ends, total length, category breakdown.
+            - include_path=yes for detailed traversal path with connector info.
+            - domain_filter: hvac/piping/electrical/all to limit traversal scope.
+            - Handles MEPCurve, FamilyInstance, and FabricationPart connectors.
+            - Skips logical connectors (ConnectorType.Logical) for accurate physical graph.
+            - Typical use: "show me all elements connected to this duct", "trace the piping network".
+
+            ## ROUTING PREFERENCES
+            - Use 'query_routing_preferences' to inspect preferred fittings for pipe/duct types.
+            - Shows: junction type (Tee vs Tap), elbow families, transition families, segment rules.
+            - Helpful before creating fittings — ensures the right family is used.
+            - Helpful for QA — verify that routing preferences are configured correctly.
+
+            ## CONNECTOR ANALYSIS (for dynamic code / advanced queries)
+            - Connector access: MEPCurve.ConnectorManager, FamilyInstance.MEPModel?.ConnectorManager, FabricationPart.ConnectorManager
+            - Properties: Origin, CoordinateSystem.BasisZ (direction), Domain, Shape, Flow, PressureDrop
+            - For Tee fitting: main connectors (colinear, dot≈-1) first, branch last.
+            - For Cross fitting: main pair first, then branch pair.
+            - Area by shape: Round=π×r², Rect=W×H, Oval=π×W×H/4
 
             ## DESIGN CRITERIA QUICK REFERENCE
             Duct velocity: main 8-12 m/s, branch 4-6 m/s, exhaust 8-10 m/s

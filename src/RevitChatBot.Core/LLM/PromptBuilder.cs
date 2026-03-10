@@ -26,7 +26,10 @@ public class PromptBuilder
         - Clash avoidance: detect clashes, group connected components, reroute with dogleg pattern ('avoid_clash')
         - Directional clearance: ray casting in 6 directions against walls/floors/ceilings ('check_directional_clearance')
         - Room/Space mapping: identify which room/space each MEP element belongs to ('map_room_to_mep')
-        - Split duct/pipe: divide into equal segments with union fittings and numbering ('split_duct_pipe')
+        - Split duct/pipe/conduit/cable tray: divide into equal segments with union fittings ('split_duct_pipe')
+        - MEP system graph traversal: trace full system topology from any element ('traverse_mep_system')
+        - Routing preferences: query preferred fittings for pipe/duct types ('query_routing_preferences')
+        - Connector analysis: flow, pressure, area, direction for any MEP connector
         - Dynamic code: generate and execute custom C# via Revit API ('execute_revit_code')
         
         ENGINEERING JUDGMENT — RED FLAGS:

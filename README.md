@@ -54,13 +54,13 @@ graph TB
     subgraph MEPLayer [RevitChatBot.MEP - Skills & Context]
         direction LR
         subgraph SkillSubs [Skills by Domain]
-            SQ["Query: Elements, Overview,<br/>SystemAnalysis, Connectivity,<br/>Space, MapRoomToMep"]
+            SQ["Query: Elements, Overview,<br/>SystemAnalysis, Connectivity,<br/>Space, MapRoomToMep,<br/>TraverseMepSystem, RoutingPrefs"]
             SCk["Check: Velocity, Slope, Connection,<br/>Insulation, Clearance, DirectionalClearance,<br/>FireDamper, Audit, Compliance"]
             SH[HVAC: Load, DuctSizing]
             SPl[Plumbing: PipeSizing, Drainage]
             SEl[Electrical: LoadAnalysis]
             SC["Coordination: Clash, AdvClash,<br/>AvoidClash (Reroute Engine)"]
-            SM["Modify: Create, ModifyParam,<br/>BatchModify, SplitDuctPipe"]
+            SM["Modify: Create, ModifyParam,<br/>BatchModify, SplitDuctPipe<br/>(Duct/Pipe/Conduit/CableTray)"]
             SR2[Report: ExportReport]
             SCa[Calculation: MEPCalc]
         end
@@ -413,7 +413,7 @@ RevitChatBot.slnx
 │   │
 │   ├── RevitChatBot.MEP/                 # MEP domain skills & context
 │   │   ├── Skills/
-│   │   │   ├── Query/                    # QueryElements, SystemOverview, SystemAnalysis, ConnectivityAnalysis, SpaceAnalysis
+│   │   │   ├── Query/                    # QueryElements, SystemOverview, SystemAnalysis, ConnectivityAnalysis, SpaceAnalysis, TraverseMepSystem, RoutingPreferences
 │   │   │   ├── Check/                    # CheckVelocity, CheckSlope, CheckConnection, CheckInsulation, CheckClearance, CheckFireDamper, ModelAudit, ComplianceCheck
 │   │   │   ├── HVAC/                     # HvacLoadCalculation, DuctSizing
 │   │   │   ├── Plumbing/                 # PipeSizing, DrainageCalculation
@@ -453,7 +453,8 @@ RevitChatBot.slnx
 │       │   └── bim-standards-knowledge.md # Comprehensive RAG summary
 │       ├── mep-standards/                # ASHRAE, SMACNA, TCVN, DIN EN standards (64 PDFs)
 │       │   ├── mep-routing-knowledge.md  # Clash detection, dogleg routing, MEP creation
-│       │   └── mep-spatial-clearance-knowledge.md # Ray casting, room mapping, split/union
+│       │   ├── mep-spatial-clearance-knowledge.md # Ray casting, room mapping, split/union
+│       │   └── mep-connector-knowledge.md # Connector ops, fitting creation, routing prefs, graph traversal
 │       ├── revit-api/                    # Revit API notes
 │       └── project-specs/                # Project-specific specs
 │
@@ -488,7 +489,9 @@ RevitChatBot.slnx
 | **Coordination** | `avoid_clash` | MEP rerouting engine: detect clashes → group (BFS) → classify direction → dogleg reroute (5 segments + 4 elbows). Supports Pipe/Duct/CableTray/Conduit. Analyze or execute mode. |
 | **Check** | `check_directional_clearance` | Ray casting (ReferenceIntersector) in 6 directions against walls/floors/ceilings/columns/beams. Linked model support. Multi-condition threshold checking. |
 | **Query** | `map_room_to_mep` | Map Room/Space parameters to MEP elements via IsPointInRoom/Space API. Above-space detection. Report or execute mode. |
-| **Modify** | `split_duct_pipe` | Split duct/pipe into equal segments at specified distance. Auto-creates union fittings. Sequential numbering. Bi-directional support. |
+| **Query** | `traverse_mep_system` | Full MEP system graph traversal from any element. BFS via connectors (MEPCurve, FamilyInstance, FabricationPart). Returns topology: category breakdown, open ends, total length, max depth. Optional domain filtering and detailed path output. |
+| **Query** | `query_routing_preferences` | Query routing preferences for pipe/duct types: preferred fittings (elbows, tees, crosses, transitions), junction types (Tee vs Tap), and segment rules. Useful for QA and understanding auto-routing behavior. |
+| **Modify** | `split_duct_pipe` | Split duct/pipe/conduit/cable tray into equal segments. Duct/Pipe: BreakCurve + union fittings. Conduit/CableTray: CopyElement workaround. Sequential numbering. Bi-directional support. |
 | **Calculation** | `mep_calculation` | Duct/pipe summary, airflow analysis |
 | **Modify** | `modify_parameter` | Change element parameter values |
 | **Modify** | `create_element` | Create new ducts or pipes |
