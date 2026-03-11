@@ -72,6 +72,10 @@ class RevitBridge {
     this.send({ type: 'partial_input', content });
   }
 
+  requestCurrentSettings(): void {
+    this.send({ type: MessageTypes.REQUEST_SETTINGS });
+  }
+
   setAutomationMode(mode: AutomationMode): void {
     this.send({
       type: MessageTypes.AUTOMATION_MODE_CHANGED,

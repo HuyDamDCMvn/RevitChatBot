@@ -140,4 +140,6 @@ export const MessageTypes = {
   VISION_ANALYSIS: 'vision_analysis',
   CONTEXT_SNAPSHOT: 'context_snapshot',
   VIEW_SNAPSHOT: 'view_snapshot',
+  MODEL_SYNC: 'model_sync',
+  REQUEST_SETTINGS: 'request_settings',
 } as const;

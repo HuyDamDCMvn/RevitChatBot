@@ -5,12 +5,12 @@ import { InstalledModelInfo, MessageTypes } from '../types/messages';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  activeModel?: string;
+  syncedModels?: InstalledModelInfo[];
 }
 
-const DEFAULT_MODEL = 'qwen2.5:7b';
-
-export function SettingsPanel({ isOpen, onClose }: Props) {
-  const [model, setModel] = useState(DEFAULT_MODEL);
+export function SettingsPanel({ isOpen, onClose, activeModel, syncedModels }: Props) {
+  const [model, setModel] = useState('');
   const [temperature, setTemperature] = useState(0.3);
   const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434');
   const [models, setModels] = useState<InstalledModelInfo[]>([]);
@@ -19,22 +19,37 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
   useEffect(() => {
     if (!isOpen) return;
 
+    if (activeModel) setModel(activeModel);
+    if (syncedModels && syncedModels.length > 0) {
+      setModels(syncedModels);
+      return;
+    }
+
     setLoadingModels(true);
     const unsub = bridge.onMessage((msg) => {
-      if (msg.type !== MessageTypes.HEALTH_STATUS) return;
-      const data = msg.data as { installedModels?: InstalledModelInfo[] } | undefined;
-      setModels(data?.installedModels ?? []);
-      setLoadingModels(false);
+      if (msg.type === MessageTypes.HEALTH_STATUS) {
+        const data = msg.data as { installedModels?: InstalledModelInfo[] } | undefined;
+        setModels(data?.installedModels ?? []);
+        setLoadingModels(false);
+      }
+      if (msg.type === MessageTypes.MODEL_SYNC) {
+        const data = msg.data as { models?: InstalledModelInfo[] } | undefined;
+        if (data?.models) {
+          setModels(data.models);
+          setLoadingModels(false);
+        }
+        if (msg.content && !model) setModel(msg.content);
+      }
     });
 
-    bridge.requestHealthCheck();
+    bridge.requestCurrentSettings();
 
     const timeout = setTimeout(() => setLoadingModels(false), 8000);
     return () => {
       unsub();
       clearTimeout(timeout);
     };
-  }, [isOpen]);
+  }, [isOpen, activeModel, syncedModels]);
 
   if (!isOpen) return null;
 
@@ -83,7 +98,7 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
               >
                 {models.map((m) => (
                   <option key={m.name} value={m.name}>
-                    {m.name} ({formatSize(m.sizeMB)})
+                    {m.name} ({m.parameterSize}, {formatSize(m.sizeMB)})
                   </option>
                 ))}
               </select>

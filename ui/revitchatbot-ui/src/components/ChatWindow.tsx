@@ -7,8 +7,10 @@ import { SettingsPanel } from './SettingsPanel';
 import { SkillPanel } from './SkillPanel';
 
 export function ChatWindow() {
-  const { messages, isLoading, isConnected, activeSkill, thinkingText, sendMessage, clearMessages } =
-    useRevitBridge();
+  const {
+    messages, isLoading, isConnected, activeSkill, thinkingText,
+    activeModel, installedModels, sendMessage, clearMessages,
+  } = useRevitBridge();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -30,7 +32,11 @@ export function ChatWindow() {
           <div>
             <h1 className="text-sm font-semibold text-white">MEP ChatBot</h1>
             <p className="text-[10px] text-revit-200">
-              {isConnected ? 'Connected to Revit' : 'Standalone mode'}
+              {isConnected
+                ? activeModel
+                  ? `Connected · ${activeModel}`
+                  : 'Connected to Revit'
+                : 'Standalone mode'}
             </p>
           </div>
         </div>
@@ -105,7 +111,12 @@ export function ChatWindow() {
       {/* Input */}
       <InputBar onSend={sendMessage} disabled={isLoading} />
 
-      <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        activeModel={activeModel}
+        syncedModels={installedModels}
+      />
     </div>
   );
 }

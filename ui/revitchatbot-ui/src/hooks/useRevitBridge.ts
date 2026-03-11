@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge } from '../services/bridge';
-import { ActionPlanData, ChatMessage, ImageAttachment, MessageTypes, SkillInfo } from '../types/messages';
+import {
+  ActionPlanData,
+  ChatMessage,
+  ImageAttachment,
+  InstalledModelInfo,
+  MessageTypes,
+  SkillInfo,
+} from '../types/messages';
 
 let nextId = 1;
 const genId = () => `msg-${nextId++}`;
@@ -10,6 +17,8 @@ export function useRevitBridge() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeSkill, setActiveSkill] = useState<SkillInfo | null>(null);
   const [thinkingText, setThinkingText] = useState<string | null>(null);
+  const [activeModel, setActiveModel] = useState<string>('');
+  const [installedModels, setInstalledModels] = useState<InstalledModelInfo[]>([]);
   const isConnected = bridge.isConnected;
   const pendingSkillRef = useRef<string | null>(null);
   const streamIdRef = useRef<string | null>(null);
@@ -17,6 +26,14 @@ export function useRevitBridge() {
   useEffect(() => {
     const unsubscribe = bridge.onMessage((msg) => {
       switch (msg.type) {
+        case MessageTypes.MODEL_SYNC: {
+          const modelName = msg.content ?? '';
+          if (modelName) setActiveModel(modelName);
+          const data = msg.data as { models?: InstalledModelInfo[] } | undefined;
+          if (data?.models) setInstalledModels(data.models);
+          break;
+        }
+
         case MessageTypes.STREAM_CHUNK: {
           const chunk = msg.content ?? '';
           setThinkingText(null);
@@ -236,6 +253,8 @@ export function useRevitBridge() {
     isConnected,
     activeSkill,
     thinkingText,
+    activeModel,
+    installedModels,
     sendMessage,
     clearMessages,
   };

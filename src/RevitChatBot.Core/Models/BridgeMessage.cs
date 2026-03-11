@@ -37,4 +37,6 @@ public static class BridgeMessageTypes
     public const string VisionAnalysis = "vision_analysis";
     public const string ContextSnapshot = "context_snapshot";
     public const string ViewSnapshot = "view_snapshot";
+    public const string ModelSync = "model_sync";
+    public const string RequestSettings = "request_settings";
 }

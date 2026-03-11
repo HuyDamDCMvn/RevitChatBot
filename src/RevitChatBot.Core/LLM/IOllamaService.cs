@@ -5,7 +5,7 @@ namespace RevitChatBot.Core.LLM;
 public class OllamaOptions
 {
     public string BaseUrl { get; set; } = "http://localhost:11434";
-    public string Model { get; set; } = "qwen2.5:3b";
+    public string Model { get; set; } = "";
     public double Temperature { get; set; } = 0.3;
     public int? NumCtx { get; set; } = 4096;
     public string? KeepAlive { get; set; } = "10m";

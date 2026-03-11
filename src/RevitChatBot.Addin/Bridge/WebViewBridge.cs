@@ -273,6 +273,7 @@ public class WebViewBridge : IDisposable
         WireVisualizationLearning();
 
         _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+        _ = AutoDetectModelAsync();
         _ = InitializeKnowledgeAsync();
         _ = InitializeMemoryAsync();
         _ = InitializeCodeGenModulesAsync();
@@ -686,6 +687,91 @@ public class WebViewBridge : IDisposable
         catch { }
     }
 
+    private static readonly string[] PreferredModelPrefixes =
+        ["qwen2.5", "qwen3", "llama3", "mistral", "gemma", "phi"];
+
+    /// <summary>
+    /// Detect installed Ollama models and auto-select the best one if no model is configured.
+    /// Sends model_sync to UI so the frontend knows the active model and available list.
+    /// </summary>
+    private async Task AutoDetectModelAsync()
+    {
+        if (_ollamaService is null) return;
+        try
+        {
+            var available = await _ollamaService.IsAvailableAsync();
+            if (!available)
+            {
+                SendToUI(new BridgeMessage
+                {
+                    Type = BridgeMessageTypes.Error,
+                    Content = "Cannot connect to Ollama at " +
+                              _ollamaService.GetCurrentOptions().BaseUrl +
+                              ". Make sure Ollama is running (ollama serve)."
+                });
+                return;
+            }
+
+            var models = await _ollamaService.ListModelsAsync();
+            if (models.Count == 0)
+            {
+                SendToUI(new BridgeMessage
+                {
+                    Type = BridgeMessageTypes.Error,
+                    Content = "No models installed in Ollama. Install one with: ollama pull qwen2.5:7b"
+                });
+                return;
+            }
+
+            var opts = _ollamaService.GetCurrentOptions();
+            var currentModel = opts.Model;
+            var modelExists = !string.IsNullOrEmpty(currentModel) &&
+                              models.Any(m => m.Name.Equals(currentModel, StringComparison.OrdinalIgnoreCase));
+
+            if (!modelExists)
+            {
+                var selected = PickBestModel(models);
+                _ollamaService.UpdateOptions(o => o.Model = selected);
+                currentModel = selected;
+            }
+
+            SendModelSync(currentModel, models);
+        }
+        catch { }
+    }
+
+    private static string PickBestModel(List<OllamaModel> models)
+    {
+        foreach (var prefix in PreferredModelPrefixes)
+        {
+            var match = models
+                .Where(m => m.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(m => m.Size)
+                .FirstOrDefault();
+            if (match is not null) return match.Name;
+        }
+        return models.First().Name;
+    }
+
+    private void SendModelSync(string activeModel, List<OllamaModel> models)
+    {
+        SendToUI(new BridgeMessage
+        {
+            Type = BridgeMessageTypes.ModelSync,
+            Content = activeModel,
+            Data = new Dictionary<string, object?>
+            {
+                ["models"] = models.Select(m => new Dictionary<string, object?>
+                {
+                    ["name"] = m.Name,
+                    ["parameterSize"] = m.ParameterSize,
+                    ["quantization"] = m.QuantizationLevel,
+                    ["sizeMB"] = m.Size / (1024 * 1024)
+                }).ToList()
+            }
+        });
+    }
+
     /// <summary>
     /// Adapter bridging Knowledge.Embeddings.IEmbeddingService -> Core.LLM.ISkillEmbeddingProvider.
     /// </summary>
@@ -855,6 +941,10 @@ public class WebViewBridge : IDisposable
                 case BridgeMessageTypes.MemoryStats:
                     HandleMemoryStatsRequest();
                     break;
+
+                case BridgeMessageTypes.RequestSettings:
+                    await HandleRequestSettingsAsync();
+                    break;
             }
         }
         catch (Exception ex)
@@ -903,7 +993,7 @@ public class WebViewBridge : IDisposable
             SendToUI(new BridgeMessage
             {
                 Type = BridgeMessageTypes.Error,
-                Content = $"Error: {ex.Message}"
+                Content = ex.Message
             });
         }
     }
@@ -1074,6 +1164,7 @@ public class WebViewBridge : IDisposable
         }
 
         await HandleHealthCheckAsync().ConfigureAwait(false);
+        await HandleRequestSettingsAsync().ConfigureAwait(false);
     }
 
     private void HandleAutomationModeChange(string modeName)
@@ -1099,6 +1190,18 @@ public class WebViewBridge : IDisposable
             if (!granted)
                 _memoryManager?.ClearLongTermMemory();
         }
+    }
+
+    private async Task HandleRequestSettingsAsync()
+    {
+        if (_ollamaService is null) return;
+        try
+        {
+            var models = await _ollamaService.ListModelsAsync();
+            var current = _ollamaService.GetCurrentOptions().Model;
+            SendModelSync(current, models);
+        }
+        catch { }
     }
 
     private void HandleMemoryStatsRequest()

@@ -406,7 +406,22 @@ public class OllamaService : IOllamaService, IDisposable
     {
         var content = new StringContent(payload, Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync(endpoint, content, ct);
-        response.EnsureSuccessStatusCode();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            string detail;
+            try
+            {
+                var errNode = JsonNode.Parse(errorBody);
+                detail = errNode?["error"]?.GetValue<string>() ?? errorBody;
+            }
+            catch { detail = errorBody; }
+
+            throw new HttpRequestException(
+                $"Ollama {endpoint} failed ({(int)response.StatusCode}): {detail}");
+        }
+
         var json = await response.Content.ReadAsStringAsync(ct);
         return JsonNode.Parse(json)!;
     }
