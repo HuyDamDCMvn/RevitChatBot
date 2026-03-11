@@ -9,7 +9,7 @@ namespace RevitChatBot.Core.Agent;
 
 /// <summary>
 /// Implements a ReAct (Reasoning + Acting) agent pattern for multi-step task execution.
-/// Integrates all LLM intelligence modules:
+/// Integrates all LLM intelligence modules + self-training pipeline:
 ///   - ConversationQueryRewriter (P0)
 ///   - ContextWindowOptimizer (P0)
 ///   - SmartHistoryPruner (P1)
@@ -20,6 +20,11 @@ namespace RevitChatBot.Core.Agent;
 ///   - PromptCache (P2)
 ///   - ResponseQualityValidator (P2)
 ///   - StreamingIntentDetector (P3) — exposed via ChatSessionV2
+///   - PlanReplayStore (self-training: plan-level learning)
+///   - InteractionRecorder (self-training: interaction logging)
+///   - SelfEvaluator + ImprovementStore (self-training: quality loop)
+///   - CompositeSkillEngine (self-training: auto-compose skills)
+///   - SelfLearningPersistenceManager (self-training: persist all)
 /// </summary>
 public class AgentOrchestrator
 {
@@ -43,11 +48,20 @@ public class AgentOrchestrator
     private readonly SkillSuccessFeedback? _skillFeedback;
     private readonly PromptCache? _promptCache;
     private readonly AgentLogger? _agentLogger;
+
+    private readonly PlanReplayStore? _planReplayStore;
+    private readonly InteractionRecorder? _interactionRecorder;
+    private readonly SelfEvaluator? _selfEvaluator;
+    private readonly ImprovementStore? _improvementStore;
+    private readonly CompositeSkillEngine? _compositeEngine;
+    private readonly SelfLearningPersistenceManager? _persistenceManager;
+
     private readonly WarningsDeltaTracker _warningsDeltaTracker = new();
     private readonly List<ChatMessage> _history = [];
 
     private const int MaxReActSteps = 8;
     private const int MaxRetryOnLowQuality = 1;
+    private const int SelfEvalMinSteps = 2;
 
     private static readonly HashSet<string> DestructiveSkills =
     [
@@ -90,7 +104,13 @@ public class AgentOrchestrator
         DynamicGlossary? dynamicGlossary = null,
         SkillSuccessFeedback? skillFeedback = null,
         PromptCache? promptCache = null,
-        AgentLogger? agentLogger = null)
+        AgentLogger? agentLogger = null,
+        PlanReplayStore? planReplayStore = null,
+        InteractionRecorder? interactionRecorder = null,
+        SelfEvaluator? selfEvaluator = null,
+        ImprovementStore? improvementStore = null,
+        CompositeSkillEngine? compositeEngine = null,
+        SelfLearningPersistenceManager? persistenceManager = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -112,6 +132,12 @@ public class AgentOrchestrator
         _skillFeedback = skillFeedback;
         _promptCache = promptCache;
         _agentLogger = agentLogger;
+        _planReplayStore = planReplayStore;
+        _interactionRecorder = interactionRecorder;
+        _selfEvaluator = selfEvaluator;
+        _improvementStore = improvementStore;
+        _compositeEngine = compositeEngine;
+        _persistenceManager = persistenceManager;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -301,6 +327,38 @@ public class AgentOrchestrator
                        string.Join("\n", subQueries.Select((q, i) => $"  {i + 1}. {q}")) +
                        "\nComplete each before moving to the next.";
             messages.Insert(messages.Count - historyForPrompt.Count, ChatMessage.FromSystem(hint));
+        }
+
+        // --- Phase 3.7: Plan Replay — inject similar past plan if found ---
+        StoredPlan? replayHint = null;
+        if (_planReplayStore != null)
+        {
+            try
+            {
+                replayHint = await _planReplayStore.FindSimilarPlan(
+                    effectiveQuery, analysis, cancellationToken);
+            }
+            catch { /* non-critical */ }
+        }
+
+        if (replayHint != null)
+        {
+            var replayContent = "--- SIMILAR PAST PLAN (consider reusing this approach) ---\n" +
+                $"Goal: \"{replayHint.Goal}\"\n" +
+                $"Steps: {string.Join(" → ", replayHint.SkillChain.Select(s => s.SkillName))}\n" +
+                $"Result: {replayHint.FinalAnswerSummary}\n" +
+                $"(used {replayHint.UseCount}x successfully)";
+            messages.Insert(messages.Count - historyForPrompt.Count,
+                ChatMessage.FromSystem(replayContent));
+        }
+
+        // --- Phase 3.8: Improvement Lessons — inject self-evaluation insights ---
+        if (_improvementStore != null && analysis != null)
+        {
+            var hints = _improvementStore.GetImprovementHints(analysis.Intent);
+            if (!string.IsNullOrEmpty(hints))
+                messages.Insert(messages.Count - historyForPrompt.Count,
+                    ChatMessage.FromSystem(hints));
         }
 
         // --- Phase 4: ReAct Loop ---
@@ -505,11 +563,62 @@ public class AgentOrchestrator
                 _ = _memory.OnAssistantResponseAsync(userMsg, finalResponse, cancellationToken);
         }
 
-        // --- Phase 5: Post-processing — learn from corrections ---
+        // --- Phase 5: Post-processing — Self-Learning Pipeline ---
         if (_dynamicGlossary != null && plan.FinalAnswer != null)
             _dynamicGlossary.LearnFromCorrection(userMessage, plan.FinalAnswer);
 
+        if (plan.IsCompleted)
+        {
+            // 5a. Record interaction for knowledge synthesis & gap analysis
+            _interactionRecorder?.Record(plan, analysis);
+
+            // 5b. Record successful multi-step plan for replay
+            if (plan.Steps.Any(s => s.Type == AgentStepType.Action))
+                _ = RecordPlanAsync(plan, analysis, cancellationToken);
+
+            // 5c. Self-evaluate and record improvements (async, non-blocking)
+            var actionStepCount = plan.Steps.Count(s => s.Type == AgentStepType.Action);
+            if (_selfEvaluator != null && actionStepCount >= SelfEvalMinSteps)
+                _ = SelfEvaluateAsync(plan, analysis, cancellationToken);
+
+            // 5d. Notify persistence manager
+            _persistenceManager?.NotifyChange();
+        }
+
         return plan;
+    }
+
+    private async Task RecordPlanAsync(
+        AgentPlan plan, QueryAnalysis? analysis, CancellationToken ct)
+    {
+        try
+        {
+            await (_planReplayStore?.RecordSuccessfulPlan(plan, analysis, ct) ?? Task.CompletedTask);
+        }
+        catch { /* non-critical */ }
+    }
+
+    private async Task SelfEvaluateAsync(
+        AgentPlan plan, QueryAnalysis? analysis, CancellationToken ct)
+    {
+        try
+        {
+            var eval = await _selfEvaluator!.EvaluatePlan(plan, analysis, ct);
+
+            if (!string.IsNullOrWhiteSpace(eval.ImprovementSuggestion))
+                _improvementStore?.RecordImprovement(
+                    analysis?.Intent ?? "unknown",
+                    eval.ImprovementSuggestion,
+                    eval.OverallScore - 5.0);
+
+            if (eval is { ShouldSaveAsTemplate: true, OverallScore: >= 7.0 } && _compositeEngine != null)
+            {
+                var candidates = _compositeEngine.DiscoverCandidates(minUseCount: 2);
+                foreach (var c in candidates.Take(2))
+                    _compositeEngine.PromoteToCompositeSkill(c);
+            }
+        }
+        catch { /* non-critical background evaluation */ }
     }
 
     private async Task<bool> RequestConfirmation(ToolCall toolCall, CancellationToken ct)
@@ -701,6 +810,10 @@ public class AgentOrchestrator
         var patternContext = _patternLearning?.GetFullContext();
         if (!string.IsNullOrWhiteSpace(patternContext))
             parts.Add(patternContext);
+
+        var compositeSkills = _compositeEngine?.GetCompositeSkillsSummary();
+        if (!string.IsNullOrWhiteSpace(compositeSkills))
+            parts.Add(compositeSkills);
 
         return parts.Count > 0
             ? "--- CODEGEN SELF-LEARNING CONTEXT ---\n" + string.Join("\n\n", parts)

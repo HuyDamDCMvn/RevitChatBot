@@ -14,6 +14,7 @@ using RevitChatBot.Core.Models;
 using RevitChatBot.Core.Skills;
 using RevitChatBot.Knowledge.Embeddings;
 using RevitChatBot.Knowledge.Search;
+using RevitChatBot.Knowledge.Synthesis;
 using RevitChatBot.Knowledge.VectorStore;
 
 namespace RevitChatBot.Addin.Bridge;
@@ -49,6 +50,15 @@ public class WebViewBridge : IDisposable
     private DynamicGlossary? _dynamicGlossary;
     private SkillSuccessFeedback? _skillFeedback;
     private PromptCache? _promptCache;
+
+    private PlanReplayStore? _planReplayStore;
+    private InteractionRecorder? _interactionRecorder;
+    private SelfEvaluator? _selfEvaluator;
+    private ImprovementStore? _improvementStore;
+    private CompositeSkillEngine? _compositeEngine;
+    private SelfLearningPersistenceManager? _persistenceManager;
+    private SelfTrainingScheduler? _selfTrainingScheduler;
+    private KnowledgeSynthesizer? _knowledgeSynthesizer;
 
     public WebViewBridge(WebView2 webView, RevitEventHandler eventHandler, BridgeInitData initData)
     {
@@ -90,6 +100,7 @@ public class WebViewBridge : IDisposable
         InitializeLLMIntelligence();
 
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
+        InitializeSelfTraining(skillRegistry, skillExecutor);
 
         _chatSession = new ChatSessionV2(
             _ollamaService, skillRegistry, skillExecutor, contextManager,
@@ -107,7 +118,14 @@ public class WebViewBridge : IDisposable
             dynamicGlossary: _dynamicGlossary,
             skillFeedback: _skillFeedback,
             promptCache: _promptCache,
-            agentLogger: _agentLogger);
+            agentLogger: _agentLogger,
+            planReplayStore: _planReplayStore,
+            interactionRecorder: _interactionRecorder,
+            selfEvaluator: _selfEvaluator,
+            improvementStore: _improvementStore,
+            compositeEngine: _compositeEngine,
+            persistenceManager: _persistenceManager,
+            selfTrainingScheduler: _selfTrainingScheduler);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -214,6 +232,7 @@ public class WebViewBridge : IDisposable
         _ = InitializeMemoryAsync();
         _ = InitializeCodeGenModulesAsync();
         _ = InitializeLLMModulesAsync();
+        _ = InitializeSelfTrainingModulesAsync();
     }
 
     private static void RegisterMEPComponents(
@@ -372,6 +391,67 @@ public class WebViewBridge : IDisposable
 
             _promptCache = new PromptCache();
             _promptCache.Initialize();
+
+            var embeddingAdapter = _skillRouter != null
+                ? new OllamaEmbeddingAdapter(new OllamaEmbeddingService()) : null;
+
+            _planReplayStore = new PlanReplayStore(
+                Path.Combine(dataDir, "plan_replay.json"), embeddingAdapter);
+            _interactionRecorder = new InteractionRecorder(
+                Path.Combine(dataDir, "interactions.json"));
+            _selfEvaluator = new SelfEvaluator(_ollamaService);
+            _improvementStore = new ImprovementStore(
+                Path.Combine(dataDir, "improvements.json"));
+        }
+        catch { }
+    }
+
+    private void InitializeSelfTraining(SkillRegistry skillRegistry, SkillExecutor skillExecutor)
+    {
+        try
+        {
+            if (_planReplayStore != null)
+                _compositeEngine = new CompositeSkillEngine(
+                    _planReplayStore, skillRegistry, skillExecutor);
+
+            _persistenceManager = new SelfLearningPersistenceManager(
+                patternLearning: _patternLearning,
+                dynamicSkills: _dynamicSkillRegistry,
+                fewShotLearning: _fewShotLearning,
+                glossary: _dynamicGlossary,
+                codeGenLibrary: _codeGenLibrary,
+                memory: _memoryManager,
+                planStore: _planReplayStore,
+                interactionRecorder: _interactionRecorder,
+                improvementStore: _improvementStore);
+
+            var gapAnalyzer = _interactionRecorder != null
+                ? new SkillGapAnalyzer(_ollamaService!, skillRegistry, _interactionRecorder)
+                : null;
+
+            var discoveryAgent = _planReplayStore != null
+                ? new SkillDiscoveryAgent(_ollamaService!, skillRegistry, _planReplayStore)
+                : null;
+
+            _selfTrainingScheduler = new SelfTrainingScheduler(
+                compositeEngine: _compositeEngine,
+                recorder: _interactionRecorder,
+                gapAnalyzer: gapAnalyzer,
+                discoveryAgent: discoveryAgent,
+                persistenceManager: _persistenceManager,
+                logger: _agentLogger);
+
+            if (_knowledgeManager != null && _ollamaService != null)
+            {
+                var addinDir = Path.GetDirectoryName(
+                    System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+                var synthDir = Path.Combine(addinDir, "knowledge", "synthesized");
+                _knowledgeSynthesizer = new KnowledgeSynthesizer(
+                    _ollamaService, _knowledgeManager, synthDir);
+
+                _selfTrainingScheduler.OnSynthesizeKnowledge = async (records, ct) =>
+                    await _knowledgeSynthesizer.SynthesizeFromInteractions(records, ct);
+            }
         }
         catch { }
     }
@@ -500,6 +580,21 @@ public class WebViewBridge : IDisposable
             if (_dynamicSkillRegistry != null) tasks.Add(_dynamicSkillRegistry.LoadAndRegisterAsync());
             if (_patternLearning != null) tasks.Add(_patternLearning.LoadAsync());
             await Task.WhenAll(tasks);
+        }
+        catch { }
+    }
+
+    private async Task InitializeSelfTrainingModulesAsync()
+    {
+        try
+        {
+            var tasks = new List<Task>();
+            if (_planReplayStore != null) tasks.Add(_planReplayStore.LoadAsync());
+            if (_interactionRecorder != null) tasks.Add(_interactionRecorder.LoadAsync());
+            if (_improvementStore != null) tasks.Add(_improvementStore.LoadAsync());
+            await Task.WhenAll(tasks);
+
+            _chatSession?.StartSelfTraining(TimeSpan.FromMinutes(30));
         }
         catch { }
     }
@@ -815,8 +910,10 @@ public class WebViewBridge : IDisposable
         if (_webView.CoreWebView2 is not null)
             _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
 
+        _chatSession?.StopSelfTraining();
         _ = SaveStateAsync();
 
+        _selfTrainingScheduler?.Dispose();
         _agentLogger?.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -826,13 +923,25 @@ public class WebViewBridge : IDisposable
         try
         {
             var timeout = Task.Delay(5000);
-            var saves = Task.WhenAll(
-                _chatSession?.PersistMemoryAsync() ?? Task.CompletedTask,
-                _codeGenLibrary?.SaveAsync() ?? Task.CompletedTask,
-                _dynamicSkillRegistry?.SaveAsync() ?? Task.CompletedTask,
-                _patternLearning?.SaveAsync() ?? Task.CompletedTask,
-                _fewShotLearning?.SaveAsync() ?? Task.CompletedTask,
-                _dynamicGlossary?.SaveAsync() ?? Task.CompletedTask);
+
+            Task saves;
+            if (_persistenceManager != null)
+            {
+                saves = Task.WhenAll(
+                    _chatSession?.PersistMemoryAsync() ?? Task.CompletedTask,
+                    _persistenceManager.PersistAllAsync());
+            }
+            else
+            {
+                saves = Task.WhenAll(
+                    _chatSession?.PersistMemoryAsync() ?? Task.CompletedTask,
+                    _codeGenLibrary?.SaveAsync() ?? Task.CompletedTask,
+                    _dynamicSkillRegistry?.SaveAsync() ?? Task.CompletedTask,
+                    _patternLearning?.SaveAsync() ?? Task.CompletedTask,
+                    _fewShotLearning?.SaveAsync() ?? Task.CompletedTask,
+                    _dynamicGlossary?.SaveAsync() ?? Task.CompletedTask);
+            }
+
             await Task.WhenAny(saves, timeout);
         }
         catch { }

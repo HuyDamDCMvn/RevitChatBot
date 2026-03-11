@@ -47,4 +47,25 @@
     <None Include="RevitChatBot.addin" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Auto-deploy to Revit 2025 Addins folder on Release build -->
+  <PropertyGroup>
+    <RevitAddinsDir>$(APPDATA)\Autodesk\Revit\Addins\2025</RevitAddinsDir>
+    <RevitDeployDir>$(RevitAddinsDir)\RevitChatBot</RevitDeployDir>
+  </PropertyGroup>
+
+  <Target Name="DeployToRevit" AfterTargets="CopyReactUI" Condition="'$(Configuration)' == 'Release'">
+    <MakeDir Directories="$(RevitDeployDir)" />
+    <MakeDir Directories="$(RevitDeployDir)\knowledge" />
+    <ItemGroup>
+      <DeployFiles Include="$(OutputPath)**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DeployFiles)"
+          DestinationFolder="$(RevitDeployDir)\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutputPath)RevitChatBot.addin"
+          DestinationFolder="$(RevitAddinsDir)"
+          SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Deployed to $(RevitDeployDir)" />
+  </Target>
+
 </Project>

@@ -1,0 +1,202 @@
+using System.Text.Json;
+using RevitChatBot.Core.Agent;
+using RevitChatBot.Core.Skills;
+
+namespace RevitChatBot.Core.CodeGen;
+
+/// <summary>
+/// Discovers repeated multi-skill patterns from PlanReplayStore and
+/// automatically promotes them as composite (macro) skills.
+/// A composite skill chains multiple existing skills sequentially.
+/// </summary>
+public class CompositeSkillEngine
+{
+    private readonly PlanReplayStore _planStore;
+    private readonly SkillRegistry _skillRegistry;
+    private readonly SkillExecutor _executor;
+
+    public CompositeSkillEngine(
+        PlanReplayStore planStore,
+        SkillRegistry skillRegistry,
+        SkillExecutor skillExecutor)
+    {
+        _planStore = planStore;
+        _skillRegistry = skillRegistry;
+        _executor = skillExecutor;
+    }
+
+    /// <summary>
+    /// Scan the plan store for repeated skill chain patterns that exceed minUseCount.
+    /// Returns candidates ranked by frequency.
+    /// </summary>
+    public List<CompositeSkillCandidate> DiscoverCandidates(int minUseCount = 3)
+    {
+        var plans = _planStore.GetAllPlans();
+        if (plans.Count == 0) return [];
+
+        var patterns = plans
+            .Where(p => p.SkillChain.Count >= 2)
+            .GroupBy(p => string.Join("→", p.SkillChain.Select(s => s.SkillName)))
+            .Where(g => g.Sum(p => p.UseCount) >= minUseCount)
+            .Select(g =>
+            {
+                var representative = g.OrderByDescending(p => p.UseCount).First();
+                return new CompositeSkillCandidate
+                {
+                    SkillChain = representative.SkillChain,
+                    UsageCount = g.Sum(p => p.UseCount),
+                    TypicalGoals = g.Select(p => p.Goal).Distinct().Take(3).ToList(),
+                    SuggestedName = GenerateName(representative.SkillChain),
+                    SuggestedDescription = GenerateDescription(
+                        representative.SkillChain, g.Select(p => p.Goal))
+                };
+            })
+            .Where(c => _skillRegistry.GetSkill(c.SuggestedName) == null)
+            .OrderByDescending(c => c.UsageCount)
+            .ToList();
+
+        return patterns;
+    }
+
+    /// <summary>
+    /// Promote a candidate to a registered composite skill.
+    /// </summary>
+    public bool PromoteToCompositeSkill(CompositeSkillCandidate candidate)
+    {
+        if (_skillRegistry.GetSkill(candidate.SuggestedName) != null)
+            return false;
+
+        var skill = new CompositeSkill(candidate.SkillChain, _executor);
+        var descriptor = new SkillDescriptor
+        {
+            Name = candidate.SuggestedName,
+            Description = candidate.SuggestedDescription + " [Composite — auto-discovered]",
+            Parameters = MergeParameters(candidate.SkillChain)
+        };
+
+        _skillRegistry.RegisterDynamic(candidate.SuggestedName, skill, descriptor);
+        return true;
+    }
+
+    /// <summary>
+    /// Get a summary of composite skills available, for LLM context injection.
+    /// </summary>
+    public string GetCompositeSkillsSummary()
+    {
+        var candidates = DiscoverCandidates(minUseCount: 2);
+        if (candidates.Count == 0) return "";
+
+        var lines = new List<string> { "[composite_skill_patterns]" };
+        foreach (var c in candidates.Take(10))
+        {
+            lines.Add($"  - {c.SuggestedName}: {c.SuggestedDescription} (used {c.UsageCount}x)");
+            lines.Add($"    chain: {string.Join(" → ", c.SkillChain.Select(s => s.SkillName))}");
+        }
+        return string.Join("\n", lines);
+    }
+
+    private static string GenerateName(List<StoredSkillCall> chain)
+    {
+        var parts = chain.Select(s =>
+        {
+            var name = s.SkillName;
+            if (name.StartsWith("check_")) return name.Replace("check_", "chk_");
+            if (name.StartsWith("query_")) return name.Replace("query_", "q_");
+            if (name.Length > 15) return name[..15];
+            return name;
+        });
+        return "composite_" + string.Join("_", parts);
+    }
+
+    private static string GenerateDescription(
+        List<StoredSkillCall> chain, IEnumerable<string> goals)
+    {
+        var skillNames = string.Join(", ", chain.Select(s => s.SkillName));
+        var sampleGoal = goals.FirstOrDefault() ?? "";
+        return $"Runs {chain.Count} skills in sequence ({skillNames}). " +
+               $"Typical use: \"{Truncate(sampleGoal, 80)}\"";
+    }
+
+    private static List<SkillParameterDescriptor> MergeParameters(List<StoredSkillCall> chain)
+    {
+        var seen = new HashSet<string>();
+        var merged = new List<SkillParameterDescriptor>();
+
+        merged.Add(new SkillParameterDescriptor
+        {
+            Name = "level_name",
+            Type = "string",
+            Description = "Building level to scope the composite operation",
+            IsRequired = false
+        });
+
+        merged.Add(new SkillParameterDescriptor
+        {
+            Name = "category",
+            Type = "string",
+            Description = "MEP category filter",
+            IsRequired = false,
+            AllowedValues = ["duct", "pipe", "conduit", "cable_tray", "equipment", "all"]
+        });
+
+        return merged;
+    }
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..max] + "...";
+}
+
+/// <summary>
+/// A skill that chains multiple existing skills in sequence.
+/// Parameters from the composite call are forwarded to each sub-skill.
+/// </summary>
+public class CompositeSkill : ISkill
+{
+    private readonly List<StoredSkillCall> _chain;
+    private readonly SkillExecutor _executor;
+
+    public CompositeSkill(List<StoredSkillCall> chain, SkillExecutor executor)
+    {
+        _chain = chain;
+        _executor = executor;
+    }
+
+    public async Task<SkillResult> ExecuteAsync(
+        SkillContext context,
+        Dictionary<string, object?> parameters,
+        CancellationToken cancellationToken = default)
+    {
+        var results = new List<string>();
+
+        for (int i = 0; i < _chain.Count; i++)
+        {
+            var step = _chain[i];
+
+            var mergedParams = new Dictionary<string, object?>(step.Parameters);
+            foreach (var (key, value) in parameters)
+            {
+                if (value != null)
+                    mergedParams[key] = value;
+            }
+
+            var result = await _executor.ExecuteAsync(step.SkillName, mergedParams, cancellationToken);
+            results.Add($"**Step {i + 1} [{step.SkillName}]**: {result.Message}");
+
+            if (!result.Success)
+                return SkillResult.Fail(
+                    $"Composite failed at step {i + 1} ({step.SkillName}): {result.Message}");
+        }
+
+        return SkillResult.Ok(string.Join("\n\n", results),
+            new { compositeSteps = _chain.Count });
+    }
+}
+
+public class CompositeSkillCandidate
+{
+    public List<StoredSkillCall> SkillChain { get; set; } = [];
+    public int UsageCount { get; set; }
+    public List<string> TypicalGoals { get; set; } = [];
+    public string SuggestedName { get; set; } = "";
+    public string SuggestedDescription { get; set; } = "";
+}

@@ -9,8 +9,8 @@ namespace RevitChatBot.Core.Agent;
 
 /// <summary>
 /// Enhanced chat session with cross-session memory, conversation summarization,
-/// learned facts, user preferences, and self-evolving codegen skills.
-/// Integrates all 10 LLM intelligence modules via AgentOrchestrator.
+/// learned facts, user preferences, self-evolving codegen skills, and
+/// self-training pipeline (plan replay, self-evaluation, composite skills).
 /// </summary>
 public class ChatSessionV2
 {
@@ -19,6 +19,8 @@ public class ChatSessionV2
     private readonly PromptBuilder _promptBuilder;
     private readonly ContextManager _contextManager;
     private readonly MemoryManager? _memory;
+    private readonly SelfLearningPersistenceManager? _persistenceManager;
+    private readonly SelfTrainingScheduler? _selfTrainingScheduler;
 
     private bool _useAgentMode = true;
     private int _messagesSinceLastPersist;
@@ -54,12 +56,21 @@ public class ChatSessionV2
         DynamicGlossary? dynamicGlossary = null,
         SkillSuccessFeedback? skillFeedback = null,
         PromptCache? promptCache = null,
-        AgentLogger? agentLogger = null)
+        AgentLogger? agentLogger = null,
+        PlanReplayStore? planReplayStore = null,
+        InteractionRecorder? interactionRecorder = null,
+        SelfEvaluator? selfEvaluator = null,
+        ImprovementStore? improvementStore = null,
+        CompositeSkillEngine? compositeEngine = null,
+        SelfLearningPersistenceManager? persistenceManager = null,
+        SelfTrainingScheduler? selfTrainingScheduler = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
         _promptBuilder = promptBuilder ?? new PromptBuilder();
         _memory = memory;
+        _persistenceManager = persistenceManager;
+        _selfTrainingScheduler = selfTrainingScheduler;
 
         _agent = new AgentOrchestrator(
             ollama, skillRegistry, skillExecutor, contextManager, _promptBuilder, memory,
@@ -67,7 +78,9 @@ public class ChatSessionV2
             queryPreprocessor, adaptivePromptBuilder, skillRouter,
             queryRewriter, contextOptimizer, intentDecomposer,
             fewShotLearning, dynamicGlossary, skillFeedback, promptCache,
-            agentLogger);
+            agentLogger,
+            planReplayStore, interactionRecorder, selfEvaluator,
+            improvementStore, compositeEngine, persistenceManager);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }
@@ -161,24 +174,55 @@ public class ChatSessionV2
     }
 
     /// <summary>
-    /// Persist all memory to disk.
+    /// Persist all memory and self-learning data to disk.
     /// </summary>
     public async Task PersistMemoryAsync(CancellationToken ct = default)
     {
-        if (_memory == null) return;
-        try
-        {
-            await _memory.PersistAsync([.. _agent.History], ct);
-        }
-        catch
-        {
-            // Non-critical
-        }
+        var tasks = new List<Task>();
+
+        if (_memory != null)
+            tasks.Add(SafeAsync(() => _memory.PersistAsync([.. _agent.History], ct)));
+
+        if (_persistenceManager != null)
+            tasks.Add(SafeAsync(() => _persistenceManager.PersistAllAsync(ct)));
+
+        await Task.WhenAll(tasks);
+    }
+
+    /// <summary>
+    /// Start the background self-training scheduler.
+    /// </summary>
+    public void StartSelfTraining(TimeSpan? interval = null)
+    {
+        _selfTrainingScheduler?.Start(interval ?? TimeSpan.FromMinutes(30));
+    }
+
+    /// <summary>
+    /// Stop the background self-training scheduler.
+    /// </summary>
+    public void StopSelfTraining()
+    {
+        _selfTrainingScheduler?.Stop();
+    }
+
+    /// <summary>
+    /// Manually trigger a single self-training cycle.
+    /// </summary>
+    public async Task RunSelfTrainingCycleAsync(CancellationToken ct = default)
+    {
+        if (_selfTrainingScheduler != null)
+            await _selfTrainingScheduler.RunCycleAsync(ct);
     }
 
     public void ClearHistory()
     {
         _agent.ClearHistory();
         _memory?.ClearProjectMemory();
+    }
+
+    private static async Task SafeAsync(Func<Task> action)
+    {
+        try { await action(); }
+        catch { /* non-critical */ }
     }
 }

@@ -1,6 +1,6 @@
 # Revit MEP ChatBot
 
-An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence and self-learning, **smart query understanding** (bilingual intent/entity extraction, adaptive prompting, semantic skill routing, few-shot examples, clarification flow), **advanced LLM intelligence** (conversation rewriting, context window optimization, smart history pruning, multi-intent decomposition, adaptive few-shot learning, dynamic glossary, skill success feedback, prompt caching, response quality validation, streaming intent detection), and a **React** UI rendered via WebView2.
+An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence, **smart query understanding** (bilingual intent/entity extraction, adaptive prompting, semantic skill routing, few-shot examples, clarification flow), **advanced LLM intelligence** (conversation rewriting, context window optimization, smart history pruning, multi-intent decomposition, adaptive few-shot learning, dynamic glossary, skill success feedback, prompt caching, response quality validation, streaming intent detection), **autonomous self-training** (plan replay, self-evaluation, composite skill discovery, knowledge synthesis, skill gap analysis, workflow discovery), and a **React** UI rendered via WebView2.
 
 ## Architecture Overview
 
@@ -63,6 +63,21 @@ graph TB
             SANA[SessionAnalytics]
             MCTX[MemoryContextProvider]
         end
+        subgraph SelfTrainSub [Self-Training - Autonomous Improvement]
+            PRS[PlanReplayStore<br/>experience replay]
+            IR[InteractionRecorder<br/>interaction logging]
+            SEV[SelfEvaluator<br/>LLM self-critique]
+            IS[ImprovementStore<br/>lessons learned]
+            CSE[CompositeSkillEngine<br/>auto-compose skills]
+            SGA[SkillGapAnalyzer<br/>detect missing skills]
+            SDA[SkillDiscoveryAgent<br/>workflow ideation]
+            STS[SelfTrainingScheduler<br/>background orchestrator]
+            SLPM[SelfLearningPersistenceManager<br/>coordinated save/load]
+        end
+    end
+
+    subgraph KnowledgeSynthSub [Knowledge Synthesis]
+        KS[KnowledgeSynthesizer<br/>auto-generate articles from interactions]
     end
 
     subgraph KnowledgeLayer [RevitChatBot.Knowledge - RAG]
@@ -414,10 +429,10 @@ graph BT
 RevitChatBot.slnx
 ├── src/
 │   ├── RevitChatBot.Core/               # Reusable - no Revit dependency
-│   │   ├── Agent/                        # AgentOrchestrator (ReAct), ChatSessionV2, AgentStep
-│   │   ├── CodeGen/                      # RoslynCodeCompiler, DynamicCodeExecutor, DynamicCodeSkill, CodeSecurityValidator, RevitApiCheatSheet, CodeExamplesLibrary, CodeGenLibrary, DynamicSkillRegistry, CodePatternLearning
+│   │   ├── Agent/                        # AgentOrchestrator (ReAct), ChatSessionV2, AgentStep, PlanReplayStore, InteractionRecorder, SelfLearningPersistenceManager, SelfTrainingScheduler, SkillDiscoveryAgent
+│   │   ├── CodeGen/                      # RoslynCodeCompiler, DynamicCodeExecutor, DynamicCodeSkill, CodeSecurityValidator, RevitApiCheatSheet, CodeExamplesLibrary, CodeGenLibrary, DynamicSkillRegistry, CodePatternLearning, CompositeSkillEngine
 │   │   ├── Memory/                       # MemoryManager, ConversationStore, ConversationSummarizer, LearnedFactsStore, UserPreferencesStore, SessionAnalytics, MemoryContextProvider
-│   │   ├── LLM/                          # OllamaService, PromptBuilder, MepGlossary, QueryPreprocessor, AdaptivePromptBuilder, SemanticSkillRouter, ClarificationFlow, FewShotIntentLibrary, ConversationQueryRewriter, ContextWindowOptimizer, SmartHistoryPruner, MultiIntentDecomposer, AdaptiveFewShotLearning, DynamicGlossary, SkillSuccessFeedback, PromptCache, ResponseQualityValidator, StreamingIntentDetector
+│   │   ├── LLM/                          # OllamaService, PromptBuilder, MepGlossary, QueryPreprocessor, AdaptivePromptBuilder, SemanticSkillRouter, ClarificationFlow, FewShotIntentLibrary, ConversationQueryRewriter, ContextWindowOptimizer, SmartHistoryPruner, MultiIntentDecomposer, AdaptiveFewShotLearning, DynamicGlossary, SkillSuccessFeedback, PromptCache, ResponseQualityValidator, StreamingIntentDetector, SelfEvaluator, ImprovementStore, SkillGapAnalyzer
 │   │   ├── Skills/                       # ISkill, SkillAttribute, SkillRegistry, SkillExecutor
 │   │   ├── Context/                      # IContextProvider, ContextManager, ContextData
 │   │   └── Models/                       # ChatMessage, BridgeMessage, ToolCall
@@ -431,6 +446,7 @@ RevitChatBot.slnx
 │   │   ├── Embeddings/                   # IEmbeddingService, OllamaEmbeddingService
 │   │   ├── VectorStore/                  # IVectorStore, InMemoryVectorStore
 │   │   ├── Documents/                    # IDocumentLoader, TextLoader, JsonLoader, PdfLoader
+│   │   ├── Synthesis/                    # KnowledgeSynthesizer (auto-generate articles from interactions)
 │   │   └── Search/                       # KnowledgeManager, KnowledgeContextProvider, KnowledgeSearchSkill
 │   │
 │   ├── RevitChatBot.MEP/                 # MEP domain skills & context
@@ -547,10 +563,22 @@ npm install
 npm run build
 ```
 
-### 3. Build the Solution
+### 3. Build & Deploy
+
+Release build auto-deploys to the Revit 2025 addins folder:
 
 ```bash
-dotnet build RevitChatBot.slnx
+dotnet build RevitChatBot.sln -c Release
+```
+
+This copies all DLLs, UI, and the `.addin` manifest to:
+```
+%APPDATA%\Autodesk\Revit\Addins\2025\RevitChatBot\
+```
+
+For development (debug build without auto-deploy):
+```bash
+dotnet build RevitChatBot.sln
 ```
 
 ### 4. Pull Ollama Models
@@ -578,31 +606,38 @@ Place standards documents (`.txt`, `.md`, `.json`, `.pdf`) in `docs/knowledge/`:
 
 The chatbot will auto-index all files (including PDFs via PdfDocumentLoader) and use them via RAG.
 
-### 6. Install the Add-in
+### 6. Launch Revit
 
-Copy from the build output to Revit's add-in folder:
+Open Revit 2025. Find the **MEP ChatBot** button in the **AI** ribbon panel.
+
+### Deployed Structure
 
 ```
 %APPDATA%\Autodesk\Revit\Addins\2025\
-├── RevitChatBot.addin
-├── RevitChatBot.Addin.dll
-├── RevitChatBot.Core.dll
-├── RevitChatBot.MEP.dll
-├── RevitChatBot.Knowledge.dll
-├── RevitChatBot.RevitServices.dll
-├── Microsoft.CodeAnalysis.*.dll     # Roslyn compiler
-├── Microsoft.Web.WebView2.*.dll
-├── UglyToad.PdfPig.*.dll            # PDF loader
-├── knowledge/                    # Copy from docs/knowledge/
-│   └── (standards files)
-├── knowledge_index.json          # Auto-generated vector index
-└── ui/
-    └── index.html (+ assets/)
+├── RevitChatBot.addin                    # Manifest (auto-deployed)
+└── RevitChatBot/
+    ├── RevitChatBot.Addin.dll            # Entry point
+    ├── RevitChatBot.Core.dll
+    ├── RevitChatBot.MEP.dll
+    ├── RevitChatBot.Knowledge.dll
+    ├── RevitChatBot.RevitServices.dll
+    ├── Microsoft.CodeAnalysis.*.dll      # Roslyn compiler
+    ├── Microsoft.Web.WebView2.*.dll
+    ├── UglyToad.PdfPig.*.dll             # PDF loader
+    ├── runtimes/                         # WebView2 native loaders
+    ├── ui/                               # React UI (auto-copied from dist/)
+    │   └── index.html + assets/
+    ├── knowledge/                        # RAG knowledge base
+    │   └── synthesized/                  # Auto-generated articles
+    ├── codegen/                          # Self-evolving code (auto-created)
+    ├── llm_data/                         # Self-training data (auto-created)
+    │   ├── plan_replay.json
+    │   ├── interactions.json
+    │   ├── improvements.json
+    │   ├── learned_fewshot.json
+    │   └── dynamic_glossary.json
+    └── logs/                             # Agent execution logs
 ```
-
-### 7. Launch Revit
-
-Open Revit 2025. Find the **MEP ChatBot** button in the ribbon panel.
 
 ## Adding New Skills
 
@@ -845,6 +880,79 @@ flowchart TB
 11. **PromptCache**: Returns pre-compiled CheatSheet
 12. **AgentOrchestrator**: LLM calls `check_insulation` with correct params
 13. **ResponseQualityValidator**: Score 8/10, passes (response references element IDs and uses table)
+
+## Self-Training System (Autonomous Improvement)
+
+The chatbot continuously improves through a multi-layered self-training pipeline that runs both inline (after each interaction) and in the background (every 30 minutes):
+
+```mermaid
+flowchart TB
+    subgraph Inline [Inline — After Every Interaction]
+        A1["InteractionRecorder<br/>Log query + skills + answer"]
+        A2["PlanReplayStore<br/>Store successful multi-step plans"]
+        A3["SelfEvaluator<br/>LLM self-critique (score + suggestions)"]
+        A4["ImprovementStore<br/>Accumulate lessons learned"]
+        A5["SelfLearningPersistenceManager<br/>Batch save all modules"]
+    end
+
+    subgraph Background [Background — Every 30 Minutes]
+        B1["CompositeSkillEngine<br/>Discover repeated skill chains → promote as macro skills"]
+        B2["KnowledgeSynthesizer<br/>Cluster interactions by topic → generate RAG articles"]
+        B3["SkillGapAnalyzer<br/>Detect codegen fallbacks → suggest new dedicated skills"]
+        B4["SkillDiscoveryAgent<br/>LLM-driven workflow ideation from existing skills"]
+    end
+
+    subgraph PromptInjection [Injected into Future LLM Calls]
+        C1["Plan Replay hints<br/>(similar past approach)"]
+        C2["Improvement hints<br/>(lessons learned)"]
+        C3["Composite skill summaries<br/>(available macros)"]
+    end
+
+    A1 --> A2 --> A3 --> A4 --> A5
+    A5 --> B1 & B2 & B3 & B4
+    A2 --> C1
+    A4 --> C2
+    B1 --> C3
+```
+
+### Self-Training Modules
+
+| Module | Trigger | Purpose |
+|---|---|---|
+| **PlanReplayStore** | After each multi-step plan | Stores successful plans with semantic embeddings. Injects similar past plans as hints for new queries. |
+| **InteractionRecorder** | After each interaction | Logs query, skills used, answer, and topic. Feeds knowledge synthesis and gap analysis. |
+| **SelfEvaluator** | After plans with 2+ actions | LLM evaluates its own plan (completeness, efficiency, accuracy). Generates improvement suggestions. |
+| **ImprovementStore** | From SelfEvaluator | Accumulates "lessons learned" across sessions. Injected into future prompts to guide decisions. |
+| **CompositeSkillEngine** | Background (30min) | Discovers recurring skill chains (e.g., query→check→report) and promotes them as single callable skills. |
+| **KnowledgeSynthesizer** | Background (30min) | Clusters recent interactions by topic, uses LLM to generate knowledge articles, indexes them in RAG. |
+| **SkillGapAnalyzer** | Background (weekly) | Detects queries that always fall back to codegen, suggests dedicated skill definitions. |
+| **SkillDiscoveryAgent** | Background (3-day) | LLM analyzes existing skills and patterns to propose novel workflow combinations. |
+| **SelfLearningPersistenceManager** | After N changes | Coordinates saving all learning data across modules. Batches writes to minimize I/O. |
+| **SelfTrainingScheduler** | Continuous (30min timer) | Orchestrates all background self-training tasks during idle time. |
+
+### Self-Training Data Flow
+
+```
+User interaction
+  → InteractionRecorder logs it
+  → PlanReplayStore saves the plan (if multi-step)
+  → SelfEvaluator critiques the plan (if 2+ actions)
+    → ImprovementStore records suggestions
+    → CompositeSkillEngine considers promotion
+  → SelfLearningPersistenceManager batches save
+
+Background cycle (every 30 min):
+  → CompositeSkillEngine discovers skill chains → promotes new composite skills
+  → KnowledgeSynthesizer generates articles → indexes in RAG vector store
+  → SkillGapAnalyzer identifies missing skills (weekly)
+  → SkillDiscoveryAgent proposes new workflows (every 3 days)
+
+Next user interaction benefits from:
+  → Plan replay hints ("last time you did X→Y→Z for a similar question")
+  → Improvement hints ("remember to check insulation after querying pipes")
+  → New composite skills (callable as single tools)
+  → New knowledge articles (found via RAG search)
+```
 
 ## References
 
