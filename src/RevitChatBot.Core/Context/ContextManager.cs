@@ -5,6 +5,7 @@ public class ContextManager
     private readonly List<IContextProvider> _providers = new();
     private object? _revitDocument;
     private RevitContextCache? _contextCache;
+    private Func<Func<object, object?>, Task<object?>>? _revitApiInvoker;
 
     public RevitContextCache? ContextCache => _contextCache;
 
@@ -16,6 +17,15 @@ public class ContextManager
     public void SetContextCache(RevitContextCache cache)
     {
         _contextCache = cache;
+    }
+
+    /// <summary>
+    /// Set the Revit API invoker so context providers run on the Revit main thread.
+    /// Without this, providers that access Revit API will be skipped.
+    /// </summary>
+    public void SetRevitApiInvoker(Func<Func<object, object?>, Task<object?>>? invoker)
+    {
+        _revitApiInvoker = invoker;
     }
 
     public void Register(IContextProvider provider)
@@ -31,18 +41,42 @@ public class ContextManager
     public async Task<ContextData> GatherContextAsync()
     {
         var result = new ContextData();
-        var sorted = _providers.OrderBy(p => p.Priority);
+        var sorted = _providers.OrderBy(p => p.Priority).ToList();
 
-        foreach (var provider in sorted)
+        if (_revitDocument != null && _revitApiInvoker != null)
         {
             try
             {
-                var data = await provider.GatherAsync(_revitDocument);
-                result.Merge(data);
+                var revitContext = await _revitApiInvoker(doc =>
+                {
+                    var data = new ContextData();
+                    foreach (var provider in sorted)
+                    {
+                        try
+                        {
+                            var providerData = provider.GatherAsync(doc).GetAwaiter().GetResult();
+                            data.Merge(providerData);
+                        }
+                        catch { }
+                    }
+                    return data;
+                });
+
+                if (revitContext is ContextData cd)
+                    result.Merge(cd);
             }
-            catch (Exception ex)
+            catch { }
+        }
+        else
+        {
+            foreach (var provider in sorted)
             {
-                result.Add($"error_{provider.Name}", $"Failed to gather context: {ex.Message}");
+                try
+                {
+                    var data = await provider.GatherAsync(null);
+                    result.Merge(data);
+                }
+                catch { }
             }
         }
 

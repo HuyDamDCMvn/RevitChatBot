@@ -74,6 +74,8 @@ public class WebViewBridge : IDisposable
         var contextManager = new ContextManager();
         contextManager.SetRevitDocument(_initData.Document);
         contextManager.SetContextCache(_contextCache);
+        contextManager.SetRevitApiInvoker(async action =>
+            await _eventHandler.ExecuteAsync(doc => action(doc)));
 
         var addinDir = Path.GetDirectoryName(
             System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
