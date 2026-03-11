@@ -19,7 +19,7 @@ public class OllamaEmbeddingService : IEmbeddingService, IDisposable
         _httpClient = new HttpClient
         {
             BaseAddress = new Uri(baseUrl),
-            Timeout = TimeSpan.FromMinutes(2)
+            Timeout = TimeSpan.FromSeconds(15)
         };
     }
 
