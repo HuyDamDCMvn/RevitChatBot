@@ -32,13 +32,22 @@ public partial class ChatBotWindow : Window
 
             await WebView.EnsureCoreWebView2Async(env);
 
+            WebView.CoreWebView2.NavigationCompleted += (_, args) =>
+            {
+                if (!args.IsSuccess)
+                    LoadingText.Text = $"Navigation failed: {args.WebErrorStatus}";
+            };
+
             _bridge = new WebViewBridge(WebView, _eventHandler, _initData);
             _bridge.Initialize();
 
-            var uiPath = FindUiPath();
-            if (uiPath is not null)
+            var uiFolder = FindUiFolder();
+            if (uiFolder is not null)
             {
-                WebView.CoreWebView2.Navigate(new Uri(uiPath).AbsoluteUri);
+                WebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    "revitchatbot.local", uiFolder,
+                    CoreWebView2HostResourceAccessKind.Allow);
+                WebView.CoreWebView2.Navigate("https://revitchatbot.local/index.html");
             }
             else
             {
@@ -53,18 +62,19 @@ public partial class ChatBotWindow : Window
         }
     }
 
-    private static string? FindUiPath()
+    private static string? FindUiFolder()
     {
         var assemblyDir = Path.GetDirectoryName(
             System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
 
         var candidates = new[]
         {
-            Path.Combine(assemblyDir, "ui", "index.html"),
-            Path.Combine(assemblyDir, "..", "ui", "revitchatbot-ui", "dist", "index.html"),
+            Path.Combine(assemblyDir, "ui"),
+            Path.Combine(assemblyDir, "..", "ui", "revitchatbot-ui", "dist"),
         };
 
-        return candidates.FirstOrDefault(File.Exists);
+        return candidates.FirstOrDefault(d =>
+            Directory.Exists(d) && File.Exists(Path.Combine(d, "index.html")));
     }
 
     private static string GetFallbackHtml()
