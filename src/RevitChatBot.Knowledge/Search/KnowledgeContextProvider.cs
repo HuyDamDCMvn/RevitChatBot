@@ -14,6 +14,7 @@ public class KnowledgeContextProvider : IContextProvider
 
     public string Name => "knowledge_base";
     public int Priority => 50;
+    public bool NeedsRevitApi => false;
 
     public KnowledgeContextProvider(KnowledgeManager knowledgeManager)
     {

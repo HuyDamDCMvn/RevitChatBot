@@ -43,14 +43,18 @@ public class ContextManager
         var result = new ContextData();
         var sorted = _providers.OrderBy(p => p.Priority).ToList();
 
-        if (_revitDocument != null && _revitApiInvoker != null)
+        var revitProviders = sorted.Where(p => p.NeedsRevitApi).ToList();
+        var backgroundProviders = sorted.Where(p => !p.NeedsRevitApi).ToList();
+
+        // Revit-dependent providers run on the Revit main thread via ExternalEvent
+        if (_revitDocument != null && _revitApiInvoker != null && revitProviders.Count > 0)
         {
             try
             {
                 var revitContext = await _revitApiInvoker(doc =>
                 {
                     var data = new ContextData();
-                    foreach (var provider in sorted)
+                    foreach (var provider in revitProviders)
                     {
                         try
                         {
@@ -67,17 +71,16 @@ public class ContextManager
             }
             catch { }
         }
-        else
+
+        // Non-Revit providers run on the current (background) thread - safe for async HTTP calls
+        foreach (var provider in backgroundProviders)
         {
-            foreach (var provider in sorted)
+            try
             {
-                try
-                {
-                    var data = await provider.GatherAsync(null);
-                    result.Merge(data);
-                }
-                catch { }
+                var data = await provider.GatherAsync(_revitDocument);
+                result.Merge(data);
             }
+            catch { }
         }
 
         if (_contextCache != null)
