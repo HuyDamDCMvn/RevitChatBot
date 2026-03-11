@@ -4,9 +4,9 @@ declare global {
   interface Window {
     chrome?: {
       webview?: {
-        postMessage: (message: string) => void;
-        addEventListener: (type: string, listener: (event: { data: string }) => void) => void;
-        removeEventListener: (type: string, listener: (event: { data: string }) => void) => void;
+        postMessage: (message: unknown) => void;
+        addEventListener: (type: string, listener: (event: { data: unknown }) => void) => void;
+        removeEventListener: (type: string, listener: (event: { data: unknown }) => void) => void;
       };
     };
   }
@@ -24,7 +24,8 @@ class RevitBridge {
     if (this.isWebView2) {
       window.chrome!.webview!.addEventListener('message', (event) => {
         try {
-          const message: BridgeMessage = JSON.parse(event.data);
+          const message: BridgeMessage =
+            typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
           this.handlers.forEach((h) => h(message));
         } catch {
           // ignore parse errors
@@ -39,7 +40,7 @@ class RevitBridge {
 
   send(message: BridgeMessage): void {
     if (this.isWebView2) {
-      window.chrome!.webview!.postMessage(JSON.stringify(message));
+      window.chrome!.webview!.postMessage(message);
     } else {
       this.simulateResponse(message);
     }

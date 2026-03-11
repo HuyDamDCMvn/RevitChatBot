@@ -502,6 +502,8 @@ public class WebViewBridge : IDisposable
         try
         {
             var json = e.WebMessageAsJson;
+            if (json.StartsWith('"'))
+                json = JsonSerializer.Deserialize<string>(json) ?? json;
             var message = JsonSerializer.Deserialize<BridgeMessage>(json, _jsonOpts);
             if (message is null) return;
 
@@ -760,7 +762,7 @@ public class WebViewBridge : IDisposable
     {
         var json = JsonSerializer.Serialize(message, _jsonOpts);
         _webView.Dispatcher.InvokeAsync(() =>
-            _webView.CoreWebView2?.PostWebMessageAsJson(json));
+            _webView.CoreWebView2?.PostWebMessageAsString(json));
     }
 
     public void Dispose()
