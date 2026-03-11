@@ -1624,5 +1624,434 @@ public static class CodeExamplesLibrary
             }
         }
         ```
+
+        ### EXAMPLE 38: ExtensibleStorage — Read schema data from elements
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using Autodesk.Revit.DB.ExtensibleStorage;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var schemas = Schema.ListSchemas();
+                if (schemas.Count == 0) return "No ExtensibleStorage schemas found.";
+
+                var lines = new List<string> { $"ExtensibleStorage Schemas ({schemas.Count}):" };
+                foreach (var schema in schemas.Take(10))
+                {
+                    lines.Add($"\n  Schema: {schema.SchemaName} (GUID: {schema.GUID})");
+                    lines.Add($"    Vendor: {schema.VendorId}, Access: {schema.ReadAccessLevel}");
+                    foreach (var field in schema.ListFields())
+                        lines.Add($"    Field: {field.FieldName} ({field.ValueType?.Name ?? "?"})");
+
+                    var elems = new FilteredElementCollector(doc)
+                        .WherePasses(new ExtensibleStorageFilter(schema.GUID))
+                        .ToElements();
+                    lines.Add($"    Elements with data: {elems.Count}");
+
+                    foreach (var elem in elems.Take(3))
+                    {
+                        var entity = elem.GetEntity(schema);
+                        if (!entity.IsValid()) continue;
+                        var vals = new List<string>();
+                        foreach (var field in schema.ListFields())
+                        {
+                            try
+                            {
+                                if (field.ValueType == typeof(string))
+                                    vals.Add($"{field.FieldName}=\"{entity.Get<string>(field)}\"");
+                                else if (field.ValueType == typeof(int))
+                                    vals.Add($"{field.FieldName}={entity.Get<int>(field)}");
+                                else if (field.ValueType == typeof(double))
+                                    vals.Add($"{field.FieldName}={entity.Get<double>(field):F2}");
+                                else if (field.ValueType == typeof(ElementId))
+                                    vals.Add($"{field.FieldName}=ID:{entity.Get<ElementId>(field).Value}");
+                            }
+                            catch { vals.Add($"{field.FieldName}=(error)"); }
+                        }
+                        lines.Add($"      Elem {elem.Id}: {string.Join(", ", vals)}");
+                    }
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 39: CompoundStructure — Analyze wall/floor layers
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var wallTypes = new FilteredElementCollector(doc)
+                    .OfClass(typeof(WallType)).Cast<WallType>().ToList();
+                var lines = new List<string> { $"Wall Types ({wallTypes.Count}):" };
+
+                foreach (var wt in wallTypes)
+                {
+                    var cs = wt.GetCompoundStructure();
+                    if (cs == null)
+                    {
+                        lines.Add($"\n  {wt.Name}: No compound structure (curtain/stacked wall)");
+                        continue;
+                    }
+                    double totalWidthMm = Math.Round(wt.Width * 304.8, 1);
+                    lines.Add($"\n  {wt.Name}: {totalWidthMm}mm total, {cs.LayerCount} layers");
+
+                    foreach (var layer in cs.GetLayers())
+                    {
+                        double widthMm = Math.Round(layer.Width * 304.8, 1);
+                        string func = layer.Function.ToString();
+                        string matName = "(none)";
+                        if (layer.MaterialId != ElementId.InvalidElementId)
+                        {
+                            var mat = doc.GetElement(layer.MaterialId);
+                            matName = mat?.Name ?? "(unknown)";
+                        }
+                        lines.Add($"    [{func}] {widthMm}mm — {matName}");
+                    }
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 40: ScheduleDefinition — Read schedule fields and data
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var schedules = new FilteredElementCollector(doc)
+                    .OfClass(typeof(ViewSchedule)).Cast<ViewSchedule>()
+                    .Where(s => !s.IsTitleblockRevisionSchedule && !s.IsInternalKeynoteSchedule)
+                    .ToList();
+                if (schedules.Count == 0) return "No schedules found.";
+
+                var lines = new List<string> { $"Schedules ({schedules.Count}):" };
+                foreach (var sched in schedules.Take(5))
+                {
+                    var def = sched.Definition;
+                    int fieldCount = def.GetFieldCount();
+                    lines.Add($"\n  {sched.Name}: {fieldCount} fields");
+
+                    for (int i = 0; i < Math.Min(fieldCount, 8); i++)
+                    {
+                        var field = def.GetField(i);
+                        lines.Add($"    [{i}] {field.GetName()} (hidden={field.IsHidden})");
+                    }
+
+                    var tableData = sched.GetTableData();
+                    var body = tableData.GetSectionData(SectionType.Body);
+                    int rows = body.NumberOfRows;
+                    int cols = body.NumberOfColumns;
+                    lines.Add($"    Data: {rows} rows × {cols} cols");
+
+                    for (int r = 0; r < Math.Min(rows, 5); r++)
+                    {
+                        var cells = new List<string>();
+                        for (int c = 0; c < Math.Min(cols, 6); c++)
+                            cells.Add(sched.GetCellText(SectionType.Body, r, c));
+                        lines.Add($"    Row {r}: {string.Join(" | ", cells)}");
+                    }
+                    if (rows > 5) lines.Add($"    ... {rows - 5} more rows");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 41: FamilySizeTable — Query family size lookup tables
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var families = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Family)).Cast<Family>().ToList();
+                var lines = new List<string>();
+                int found = 0;
+
+                foreach (var fam in families)
+                {
+                    FamilySizeTableManager mgr = null;
+                    try { mgr = FamilySizeTableManager.GetFamilySizeTableManager(doc, fam.Id); }
+                    catch { continue; }
+                    if (mgr == null) continue;
+
+                    var tableNames = mgr.GetAllSizeTableNames();
+                    if (tableNames == null || tableNames.Count == 0) continue;
+                    found++;
+                    lines.Add($"\n  Family: {fam.Name} ({tableNames.Count} size tables)");
+
+                    foreach (string tableName in tableNames.Take(3))
+                    {
+                        var table = mgr.GetSizeTable(tableName);
+                        if (table == null) continue;
+                        int colCount = table.NumberOfColumns;
+                        int rowCount = table.NumberOfRows;
+                        lines.Add($"    Table: {tableName} ({rowCount} rows × {colCount} cols)");
+
+                        var headers = new List<string>();
+                        for (int c = 0; c < Math.Min(colCount, 6); c++)
+                        {
+                            var col = table.GetColumnHeader(c);
+                            headers.Add(col.Name);
+                        }
+                        lines.Add($"      Columns: {string.Join(", ", headers)}");
+                    }
+                }
+                if (found == 0) return "No families with size tables found.";
+                lines.Insert(0, $"Families with size tables ({found}):");
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 42: ForgeTypeId parameter operations — Read all params with types
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                long elemId = 123456; // Replace with actual ID
+                var elem = doc.GetElement(new ElementId(elemId));
+                if (elem == null) return $"Element {elemId} not found.";
+
+                var lines = new List<string> { $"Parameters for {elem.Category?.Name} ID:{elemId} ({elem.Name}):" };
+                var paramGroups = new Dictionary<string, List<string>>();
+
+                foreach (Parameter p in elem.Parameters)
+                {
+                    if (p?.Definition == null) continue;
+                    string name = p.Definition.Name;
+                    ForgeTypeId dataType = p.Definition.GetDataType();
+                    ForgeTypeId groupType = p.Definition.GetGroupTypeId();
+                    string groupName = groupType?.TypeId ?? "Other";
+                    string storage = p.StorageType.ToString();
+
+                    string value = p.StorageType switch
+                    {
+                        StorageType.String => p.AsString() ?? "",
+                        StorageType.Integer => p.AsInteger().ToString(),
+                        StorageType.Double => $"{p.AsDouble():F4} ({p.AsValueString() ?? ""})",
+                        StorageType.ElementId => $"ID:{p.AsElementId().Value}",
+                        _ => "(none)"
+                    };
+                    bool isReadOnly = p.IsReadOnly;
+                    string ro = isReadOnly ? " [RO]" : "";
+
+                    if (!paramGroups.ContainsKey(groupName)) paramGroups[groupName] = new();
+                    paramGroups[groupName].Add($"    {name}{ro}: {value} ({storage})");
+                }
+
+                foreach (var kv in paramGroups.OrderBy(x => x.Key))
+                {
+                    lines.Add($"\n  --- {kv.Key} ---");
+                    foreach (var line in kv.Value.Take(15))
+                        lines.Add(line);
+                    if (kv.Value.Count > 15) lines.Add($"    ... +{kv.Value.Count - 15} more");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 43: View operations — Section box, crop, element override
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var views3d = new FilteredElementCollector(doc)
+                    .OfClass(typeof(View3D)).Cast<View3D>()
+                    .Where(v => !v.IsTemplate).ToList();
+                var viewPlans = new FilteredElementCollector(doc)
+                    .OfClass(typeof(ViewPlan)).Cast<ViewPlan>()
+                    .Where(v => !v.IsTemplate).ToList();
+
+                var lines = new List<string> { $"3D Views: {views3d.Count}, Plan Views: {viewPlans.Count}" };
+
+                foreach (var v3d in views3d.Take(5))
+                {
+                    string sectionBox = "Off";
+                    if (v3d.IsSectionBoxActive)
+                    {
+                        var box = v3d.GetSectionBox();
+                        double sizeX = Math.Round((box.Max.X - box.Min.X) * 304.8);
+                        double sizeY = Math.Round((box.Max.Y - box.Min.Y) * 304.8);
+                        double sizeZ = Math.Round((box.Max.Z - box.Min.Z) * 304.8);
+                        sectionBox = $"On ({sizeX}×{sizeY}×{sizeZ}mm)";
+                    }
+                    string crop = v3d.CropBoxActive ? "Crop:On" : "Crop:Off";
+                    var orientation = v3d.GetOrientation();
+                    lines.Add($"  3D: {v3d.Name} SectionBox={sectionBox} {crop}");
+                }
+
+                foreach (var vp in viewPlans.Take(10))
+                {
+                    string scale = vp.get_Parameter(BuiltInParameter.VIEW_SCALE)?.AsInteger().ToString() ?? "?";
+                    string level = vp.GenLevel?.Name ?? "?";
+                    string detailLevel = vp.DetailLevel.ToString();
+                    lines.Add($"  Plan: {vp.Name} 1:{scale} Level={level} Detail={detailLevel}");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 44: Workset operations — List and analyze worksets
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                if (!doc.IsWorkshared)
+                    return "Document is not workshared. No worksets available.";
+
+                var wsTable = doc.GetWorksetTable();
+                var worksets = new FilteredWorksetCollector(doc)
+                    .OfKind(WorksetKind.UserWorkset).ToWorksets();
+                var lines = new List<string> { $"Worksets ({worksets.Count}):" };
+
+                foreach (var ws in worksets)
+                {
+                    string owner = ws.Owner ?? "(no owner)";
+                    string open = ws.IsOpen ? "Open" : "Closed";
+                    bool isDefault = ws.Id == wsTable.GetActiveWorksetId();
+                    string def = isDefault ? " [DEFAULT]" : "";
+
+                    var elemCount = new FilteredElementCollector(doc)
+                        .WherePasses(new ElementWorksetFilter(ws.Id))
+                        .WhereElementIsNotElementType().GetElementCount();
+
+                    lines.Add($"  {ws.Name}{def}: {open}, Owner={owner}, Elements={elemCount}");
+                }
+
+                var activeWs = wsTable.GetActiveWorksetId();
+                var activeWsName = doc.GetWorksetTable().GetWorkset(activeWs)?.Name ?? "?";
+                lines.Add($"\n  Active workset: {activeWsName}");
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 45: Deep element inspector — All properties via reflection
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Reflection;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                long elemId = 123456; // Replace with actual ID
+                var elem = doc.GetElement(new ElementId(elemId));
+                if (elem == null) return $"Element {elemId} not found.";
+
+                var lines = new List<string>
+                {
+                    $"=== Deep Inspect: {elem.GetType().Name} ID:{elemId} ===",
+                    $"  Category: {elem.Category?.Name ?? "(none)"}",
+                    $"  Name: {elem.Name}",
+                    $"  Class: {elem.GetType().FullName}"
+                };
+
+                if (doc.GetElement(elem.GetTypeId()) is ElementType et)
+                {
+                    lines.Add($"  Type: {et.Name}");
+                    if (et is FamilySymbol fs) lines.Add($"  Family: {fs.FamilyName}");
+                }
+
+                lines.Add($"\n  --- Properties ---");
+                var props = elem.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var grouped = props.GroupBy(p => p.DeclaringType?.Name ?? "Unknown")
+                    .OrderByDescending(g => g.Key == elem.GetType().Name);
+
+                foreach (var group in grouped)
+                {
+                    lines.Add($"\n  [{group.Key}]");
+                    foreach (var prop in group.OrderBy(p => p.Name))
+                    {
+                        if (prop.GetIndexParameters().Length > 0) continue;
+                        string val;
+                        try
+                        {
+                            var obj = prop.GetValue(elem);
+                            val = obj switch
+                            {
+                                null => "null",
+                                XYZ xyz => $"({Math.Round(xyz.X * 304.8)}, {Math.Round(xyz.Y * 304.8)}, {Math.Round(xyz.Z * 304.8)})mm",
+                                ElementId id => $"ID:{id.Value}",
+                                double d => $"{d:F4} ({Math.Round(d * 304.8, 1)}mm)",
+                                Enum e => e.ToString(),
+                                _ => obj.ToString()?.Substring(0, Math.Min(obj.ToString()?.Length ?? 0, 60)) ?? "null"
+                            };
+                        }
+                        catch (Exception ex) { val = $"[{ex.GetType().Name}]"; }
+                        lines.Add($"    {prop.Name}: {val}");
+                    }
+                }
+
+                ConnectorManager cm = elem switch
+                {
+                    MEPCurve mc => mc.ConnectorManager,
+                    FamilyInstance fi => fi.MEPModel?.ConnectorManager,
+                    _ => null
+                };
+                if (cm != null)
+                {
+                    lines.Add($"\n  --- Connectors ---");
+                    int idx = 0;
+                    foreach (Connector c in cm.Connectors)
+                    {
+                        string shape = c.Shape.ToString();
+                        string conn = c.IsConnected ? "Connected" : "Open";
+                        var dir = c.CoordinateSystem.BasisZ;
+                        lines.Add($"    [{idx}] {shape} {c.Domain} {conn} pos=({Math.Round(c.Origin.X*304.8)},{Math.Round(c.Origin.Y*304.8)},{Math.Round(c.Origin.Z*304.8)})mm dir=({dir.X:F2},{dir.Y:F2},{dir.Z:F2})");
+                        idx++;
+                    }
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
         """;
 }

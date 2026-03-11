@@ -10,15 +10,26 @@ namespace RevitChatBot.Core.LLM;
 /// </summary>
 public class ContextWindowOptimizer
 {
-    private readonly int _maxTokens;
+    private int _maxTokens;
 
     private const int TokensPerChar = 4;
     private const int ReservedForResponse = 1024;
     private const int MinHistoryTokens = 500;
 
+    public int MaxTokens => _maxTokens;
+
     public ContextWindowOptimizer(int maxContextTokens = 8192)
     {
         _maxTokens = maxContextTokens;
+    }
+
+    /// <summary>
+    /// Update the token budget, e.g. after auto-detecting model context length via /api/show.
+    /// </summary>
+    public void UpdateMaxTokens(int maxContextTokens)
+    {
+        if (maxContextTokens > 0)
+            _maxTokens = maxContextTokens;
     }
 
     public static int EstimateTokens(string text) =>

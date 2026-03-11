@@ -31,6 +31,8 @@ public class ChatSessionV2
     public event Action<string>? OnStreamChunk;
     public event Action<string>? OnThinking;
     public event Func<string, Task<bool>>? OnConfirmationRequired;
+    public event Func<ActionPlan, Task<bool>>? OnActionPlanReview;
+    public event Func<Task<WarningsCaptureResult>>? OnCaptureWarnings;
 
     public ChatSessionV2(
         IOllamaService ollama,
@@ -51,7 +53,8 @@ public class ChatSessionV2
         AdaptiveFewShotLearning? fewShotLearning = null,
         DynamicGlossary? dynamicGlossary = null,
         SkillSuccessFeedback? skillFeedback = null,
-        PromptCache? promptCache = null)
+        PromptCache? promptCache = null,
+        AgentLogger? agentLogger = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
@@ -63,7 +66,8 @@ public class ChatSessionV2
             codeGenLibrary, dynamicSkillRegistry, patternLearning,
             queryPreprocessor, adaptivePromptBuilder, skillRouter,
             queryRewriter, contextOptimizer, intentDecomposer,
-            fewShotLearning, dynamicGlossary, skillFeedback, promptCache);
+            fewShotLearning, dynamicGlossary, skillFeedback, promptCache,
+            agentLogger);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }
@@ -104,6 +108,10 @@ public class ChatSessionV2
         {
             if (OnConfirmationRequired is not null)
                 _agent.OnConfirmationRequired += OnConfirmationRequired;
+            if (OnActionPlanReview is not null)
+                _agent.OnActionPlanReview += OnActionPlanReview;
+            if (OnCaptureWarnings is not null)
+                _agent.OnCaptureWarnings += OnCaptureWarnings;
 
             try
             {
@@ -115,6 +123,10 @@ public class ChatSessionV2
             {
                 if (OnConfirmationRequired is not null)
                     _agent.OnConfirmationRequired -= OnConfirmationRequired;
+                if (OnActionPlanReview is not null)
+                    _agent.OnActionPlanReview -= OnActionPlanReview;
+                if (OnCaptureWarnings is not null)
+                    _agent.OnCaptureWarnings -= OnCaptureWarnings;
             }
         }
         else

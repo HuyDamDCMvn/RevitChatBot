@@ -42,6 +42,8 @@ public class AgentOrchestrator
     private readonly DynamicGlossary? _dynamicGlossary;
     private readonly SkillSuccessFeedback? _skillFeedback;
     private readonly PromptCache? _promptCache;
+    private readonly AgentLogger? _agentLogger;
+    private readonly WarningsDeltaTracker _warningsDeltaTracker = new();
     private readonly List<ChatMessage> _history = [];
 
     private const int MaxReActSteps = 8;
@@ -65,6 +67,8 @@ public class AgentOrchestrator
     public event Action<AgentStep>? OnStepExecuted;
     public event Action<string>? OnThinking;
     public event Func<string, Task<bool>>? OnConfirmationRequired;
+    public event Func<ActionPlan, Task<bool>>? OnActionPlanReview;
+    public event Func<Task<WarningsCaptureResult>>? OnCaptureWarnings;
 
     public AgentOrchestrator(
         IOllamaService ollama,
@@ -85,7 +89,8 @@ public class AgentOrchestrator
         AdaptiveFewShotLearning? fewShotLearning = null,
         DynamicGlossary? dynamicGlossary = null,
         SkillSuccessFeedback? skillFeedback = null,
-        PromptCache? promptCache = null)
+        PromptCache? promptCache = null,
+        AgentLogger? agentLogger = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -106,6 +111,7 @@ public class AgentOrchestrator
         _dynamicGlossary = dynamicGlossary;
         _skillFeedback = skillFeedback;
         _promptCache = promptCache;
+        _agentLogger = agentLogger;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -196,11 +202,38 @@ public class AgentOrchestrator
         if (_skillFeedback != null && analysis != null)
             filteredSkills = _skillFeedback.ApplyFeedback(filteredSkills, analysis);
 
-        var toolDefs = _adaptivePromptBuilder?.BuildToolDefinitions(filteredSkills)
-            ?? _promptBuilder.BuildToolDefinitions(filteredSkills);
+        // --- Automation Mode: suppress tools in SuggestOnly mode ---
+        var automationMode = _contextManager.ContextCache?.AutomationMode
+            ?? AutomationMode.PlanAndApprove;
+
+        _agentLogger?.LogContextSnapshot(
+            _contextManager.ContextCache?.CurrentView?.ViewType,
+            _contextManager.ContextCache?.CurrentSelection?.Count,
+            _contextManager.ContextCache?.CurrentSelection?.Categories,
+            automationMode.ToString());
+
+        var toolDefs = automationMode == AutomationMode.SuggestOnly
+            ? null
+            : _adaptivePromptBuilder?.BuildToolDefinitions(filteredSkills)
+              ?? _promptBuilder.BuildToolDefinitions(filteredSkills);
 
         // --- Phase 3: Build Messages ---
         var basePrompt = BuildReActSystemPrompt();
+        if (automationMode == AutomationMode.SuggestOnly)
+        {
+            basePrompt += "\n\n## CURRENT MODE: SUGGEST ONLY\n" +
+                "You are in suggest-only mode. Do NOT call any tools. Only analyze the request, " +
+                "explain what you would do, which tools you would use, and why. " +
+                "Let the user decide whether to proceed.";
+        }
+        else if (automationMode == AutomationMode.PlanAndApprove)
+        {
+            basePrompt += "\n\n## CURRENT MODE: PLAN AND APPROVE\n" +
+                "Before executing destructive actions (create, modify, delete), " +
+                "you must explain the plan clearly. The user will review and approve. " +
+                "Include: which tools, which parameters, and what the impact will be.";
+        }
+
         var systemPrompt = _contextOptimizer != null && analysis != null
             ? _contextOptimizer.OptimizeSystemPrompt(basePrompt, analysis.Intent)
             : basePrompt;
@@ -254,7 +287,7 @@ public class AgentOrchestrator
         if (_contextOptimizer != null)
         {
             int usedTokens = messages.Sum(m => ContextWindowOptimizer.EstimateTokens(m.Content));
-            int available = 8192 - usedTokens - 1024;
+            int available = _contextOptimizer.MaxTokens - usedTokens - 1024;
             historyForPrompt = _contextOptimizer.OptimizeHistory(historyForPrompt, available);
         }
 
@@ -273,7 +306,7 @@ public class AgentOrchestrator
         // --- Phase 4: ReAct Loop ---
         for (int step = 0; step < MaxReActSteps; step++)
         {
-            var response = await _ollama.ChatAsync(messages, toolDefs, cancellationToken);
+            var response = await _ollama.ChatAsync(messages, toolDefs, cancellationToken: cancellationToken);
 
             if (response.ToolCalls is not { Count: > 0 })
             {
@@ -290,7 +323,7 @@ public class AgentOrchestrator
                         messages.Add(response);
                         messages.Add(ChatMessage.FromSystem(retryPrompt));
 
-                        var retryResponse = await _ollama.ChatAsync(messages, toolDefs, cancellationToken);
+                        var retryResponse = await _ollama.ChatAsync(messages, toolDefs, cancellationToken: cancellationToken);
                         if (!string.IsNullOrWhiteSpace(retryResponse.Content))
                         {
                             finalContent = retryResponse.Content;
@@ -316,23 +349,55 @@ public class AgentOrchestrator
                 break;
             }
 
+            var thoughtContent = response.Content;
+            if (!string.IsNullOrWhiteSpace(response.Thinking))
+                thoughtContent = $"[Thinking]\n{response.Thinking}\n\n{thoughtContent}";
+
             var thoughtStep = new AgentStep
             {
                 Type = AgentStepType.Thought,
-                Content = response.Content
+                Content = thoughtContent
             };
             plan.Steps.Add(thoughtStep);
             OnStepExecuted?.Invoke(thoughtStep);
 
-            if (!string.IsNullOrWhiteSpace(response.Content))
+            if (!string.IsNullOrWhiteSpace(response.Thinking))
+                OnThinking?.Invoke(response.Thinking);
+            else if (!string.IsNullOrWhiteSpace(response.Content))
                 OnThinking?.Invoke(response.Content);
 
             messages.Add(response);
             _history.Add(response);
 
+            // --- Structured Action Plan for PlanAndApprove mode ---
+            var hasDestructive = response.ToolCalls.Any(tc => DestructiveSkills.Contains(tc.FunctionName));
+            if (automationMode == AutomationMode.PlanAndApprove && hasDestructive
+                && OnActionPlanReview != null)
+            {
+                var actionPlan = BuildActionPlan(response.ToolCalls);
+                var approved = await OnActionPlanReview.Invoke(actionPlan);
+                _agentLogger?.LogActionPlanReview(
+                    actionPlan.Summary, actionPlan.Actions.Count, approved, actionPlan.RiskLevel);
+
+                if (!approved)
+                {
+                    var cancelMsg = ChatMessage.FromTool("plan_review",
+                        "{\"success\":false,\"message\":\"User rejected the action plan.\"}");
+                    messages.Add(cancelMsg);
+                    _history.Add(cancelMsg);
+                    plan.Steps.Add(new AgentStep
+                    {
+                        Type = AgentStepType.Observation,
+                        Content = "User rejected the planned actions."
+                    });
+                    continue;
+                }
+            }
+
             foreach (var toolCall in response.ToolCalls)
             {
-                if (DestructiveSkills.Contains(toolCall.FunctionName))
+                if (automationMode != AutomationMode.AutoExecute
+                    && DestructiveSkills.Contains(toolCall.FunctionName))
                 {
                     var confirmed = await RequestConfirmation(toolCall, cancellationToken);
                     if (!confirmed)
@@ -362,10 +427,39 @@ public class AgentOrchestrator
                 plan.Steps.Add(actionStep);
                 OnStepExecuted?.Invoke(actionStep);
 
+                // --- Warnings Delta: capture before ---
+                WarningsDelta? warningsDelta = null;
+                if (DestructiveSkills.Contains(toolCall.FunctionName) && OnCaptureWarnings != null)
+                {
+                    try
+                    {
+                        var beforeCapture = await OnCaptureWarnings.Invoke();
+                        _warningsDeltaTracker.CaptureBeforeState(
+                            beforeCapture.WarningCount, beforeCapture.WarningDetails);
+                    }
+                    catch { }
+                }
+
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var result = await _skillExecutor.ExecuteAsync(
                     toolCall.FunctionName, toolCall.Arguments, cancellationToken);
                 sw.Stop();
+
+                // --- Warnings Delta: capture after ---
+                if (DestructiveSkills.Contains(toolCall.FunctionName) && OnCaptureWarnings != null)
+                {
+                    try
+                    {
+                        var afterCapture = await OnCaptureWarnings.Invoke();
+                        warningsDelta = _warningsDeltaTracker.ComputeDelta(
+                            afterCapture.WarningCount, afterCapture.WarningDetails);
+                    }
+                    catch { }
+                }
+
+                _agentLogger?.LogToolExecution(
+                    toolCall.FunctionName, toolCall.Arguments,
+                    result.Success, sw.Elapsed.TotalMilliseconds, warningsDelta);
 
                 _memory?.OnSkillExecuted(toolCall.FunctionName, result.Success, sw.Elapsed.TotalMilliseconds);
 
@@ -374,19 +468,26 @@ public class AgentOrchestrator
 
                 _dynamicSkillRegistry?.RecordUsage(toolCall.FunctionName);
 
-                // Record success for adaptive few-shot learning
                 if (result.Success)
                     _fewShotLearning?.RecordSuccess(effectiveQuery, toolCall.FunctionName, toolCall.Arguments);
 
-                var toolMessage = ChatMessage.FromTool(toolCall.FunctionName, result.ToJson());
+                var resultJson = result.ToJson();
+                if (warningsDelta is { Delta: not 0 })
+                    resultJson = resultJson.TrimEnd('}') + $",\"warnings_delta\":\"{warningsDelta.ToSummary()}\"}}";
+
+                var toolMessage = ChatMessage.FromTool(toolCall.FunctionName, resultJson);
                 messages.Add(toolMessage);
                 _history.Add(toolMessage);
+
+                var observationContent = result.Message;
+                if (warningsDelta is { IsRegression: true })
+                    observationContent += $"\n{warningsDelta.ToSummary()}";
 
                 var observationStep = new AgentStep
                 {
                     Type = AgentStepType.Observation,
                     SkillName = toolCall.FunctionName,
-                    Content = result.Message
+                    Content = observationContent
                 };
                 plan.Steps.Add(observationStep);
                 OnStepExecuted?.Invoke(observationStep);
@@ -606,5 +707,42 @@ public class AgentOrchestrator
             : "";
     }
 
+    private ActionPlan BuildActionPlan(List<ToolCall> toolCalls)
+    {
+        var actions = toolCalls.Select(tc => new PlannedAction
+        {
+            ToolName = tc.FunctionName,
+            Arguments = tc.Arguments,
+            Description = $"Call {tc.FunctionName} with {tc.Arguments.Count} parameter(s)",
+            IsDestructive = DestructiveSkills.Contains(tc.FunctionName)
+        }).ToList();
+
+        var destructiveCount = actions.Count(a => a.IsDestructive);
+        var riskLevel = destructiveCount switch
+        {
+            0 => "low",
+            1 => "medium",
+            _ => "high"
+        };
+
+        return new ActionPlan
+        {
+            Summary = $"{actions.Count} action(s) planned, {destructiveCount} destructive",
+            Actions = actions,
+            RequiresApproval = destructiveCount > 0,
+            RiskLevel = riskLevel,
+            EstimatedElementsAffected = toolCalls
+                .SelectMany(tc => tc.Arguments.Values)
+                .OfType<string>()
+                .Count(v => v.All(char.IsDigit))
+        };
+    }
+
     public void ClearHistory() => _history.Clear();
+}
+
+public class WarningsCaptureResult
+{
+    public int WarningCount { get; set; }
+    public List<string>? WarningDetails { get; set; }
 }

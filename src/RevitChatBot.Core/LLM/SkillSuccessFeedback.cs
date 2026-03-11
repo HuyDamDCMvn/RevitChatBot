@@ -27,7 +27,7 @@ public class SkillSuccessFeedback
     {
         if (_analytics == null) return routedSkills;
 
-        var stats = _analytics.GetSkillStats();
+        var stats = _analytics.SkillStats;
         if (stats.Count == 0) return routedSkills;
 
         var scored = routedSkills.Select((skill, originalIndex) =>

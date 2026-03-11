@@ -28,9 +28,10 @@ public class OllamaService : IOllamaService, IDisposable
     public async Task<ChatMessage> ChatAsync(
         List<ChatMessage> messages,
         List<ToolDefinition>? tools = null,
+        string? formatJson = null,
         CancellationToken cancellationToken = default)
     {
-        var payload = BuildChatPayload(messages, tools, stream: false);
+        var payload = BuildChatPayload(messages, tools, stream: false, formatJson: formatJson);
         var response = await PostAsync("/api/chat", payload, cancellationToken);
         return ParseChatResponse(response);
     }
@@ -112,6 +113,20 @@ public class OllamaService : IOllamaService, IDisposable
         int? numCtx = null,
         CancellationToken cancellationToken = default)
     {
+        return await GenerateAsync(prompt, formatJson, temperature, numCtx, images: null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Call /api/generate with optional images (base64) for vision models.
+    /// </summary>
+    public async Task<string> GenerateAsync(
+        string prompt,
+        string? formatJson = null,
+        double? temperature = null,
+        int? numCtx = null,
+        List<string>? images = null,
+        CancellationToken cancellationToken = default)
+    {
         var root = new JsonObject
         {
             ["model"] = _options.Model,
@@ -131,12 +146,96 @@ public class OllamaService : IOllamaService, IDisposable
                 root["format"] = formatNode;
         }
 
+        if (images is { Count: > 0 })
+        {
+            var imagesArray = new JsonArray();
+            foreach (var img in images) imagesArray.Add(img);
+            root["images"] = imagesArray;
+        }
+
         var content = new StringContent(root.ToJsonString(), Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync("/api/generate", content, cancellationToken);
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var node = JsonNode.Parse(json);
         return node?["response"]?.GetValue<string>() ?? "";
+    }
+
+    public async Task<ModelInfo?> ShowModelAsync(
+        string? modelName = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new JsonObject { ["model"] = modelName ?? _options.Model };
+            var content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync("/api/show", content, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var node = JsonNode.Parse(json);
+            if (node is null) return null;
+
+            var modelParams = node["model_info"];
+            int ctxLength = 0;
+
+            if (modelParams != null)
+            {
+                foreach (var prop in modelParams.AsObject())
+                {
+                    if (prop.Key.EndsWith(".context_length", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ctxLength = prop.Value?.GetValue<int>() ?? 0;
+                        break;
+                    }
+                }
+            }
+
+            return new ModelInfo
+            {
+                ModelName = modelName ?? _options.Model,
+                ContextLength = ctxLength,
+                Family = node["details"]?["family"]?.GetValue<string>() ?? "",
+                ParameterSize = node["details"]?["parameter_size"]?.GetValue<string>() ?? "",
+                QuantizationLevel = node["details"]?["quantization_level"]?.GetValue<string>() ?? "",
+                Template = node["template"]?.GetValue<string>() ?? "",
+                System = node["system"]?.GetValue<string>()
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<List<RunningModel>> ListRunningModelsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var models = new List<RunningModel>();
+        try
+        {
+            var response = await _httpClient.GetAsync("/api/ps", cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var node = JsonNode.Parse(json);
+            var modelsArray = node?["models"]?.AsArray();
+            if (modelsArray is null) return models;
+
+            foreach (var m in modelsArray)
+            {
+                models.Add(new RunningModel
+                {
+                    Name = m?["name"]?.GetValue<string>() ?? "",
+                    Size = m?["size"]?.GetValue<long>() ?? 0,
+                    SizeVram = m?["size_vram"]?.GetValue<long>() ?? 0,
+                    ParameterSize = m?["details"]?["parameter_size"]?.GetValue<string>() ?? "",
+                    QuantizationLevel = m?["details"]?["quantization_level"]?.GetValue<string>() ?? "",
+                    ExpiresAt = DateTime.TryParse(
+                        m?["expires_at"]?.GetValue<string>(), out var dt) ? dt : DateTime.MaxValue
+                });
+            }
+        }
+        catch { }
+        return models;
     }
 
     public void UpdateOptions(Action<OllamaOptions> configure)
@@ -150,7 +249,8 @@ public class OllamaService : IOllamaService, IDisposable
     private string BuildChatPayload(
         List<ChatMessage> messages,
         List<ToolDefinition>? tools,
-        bool stream)
+        bool stream,
+        string? formatJson = null)
     {
         var root = new JsonObject
         {
@@ -171,6 +271,20 @@ public class OllamaService : IOllamaService, IDisposable
         if (_options.Think.HasValue)
             root["think"] = _options.Think.Value;
 
+        if (_options.Logprobs.HasValue && _options.Logprobs.Value)
+        {
+            root["logprobs"] = true;
+            if (_options.TopLogprobs.HasValue)
+                root["top_logprobs"] = _options.TopLogprobs.Value;
+        }
+
+        if (formatJson != null)
+        {
+            var formatNode = JsonNode.Parse(formatJson);
+            if (formatNode != null)
+                root["format"] = formatNode;
+        }
+
         root["messages"] = BuildMessagesArray(messages);
 
         if (tools is { Count: > 0 })
@@ -190,6 +304,9 @@ public class OllamaService : IOllamaService, IDisposable
                 ["role"] = msg.Role.ToString().ToLowerInvariant(),
                 ["content"] = msg.Content
             };
+
+            if (!string.IsNullOrEmpty(msg.Thinking))
+                msgObj["thinking"] = msg.Thinking;
 
             if (msg.ToolCalls is { Count: > 0 })
             {
@@ -291,6 +408,10 @@ public class OllamaService : IOllamaService, IDisposable
         var message = node["message"];
         var content = message?["content"]?.GetValue<string>() ?? string.Empty;
         var result = ChatMessage.FromAssistant(content);
+
+        var thinking = message?["thinking"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(thinking))
+            result.Thinking = thinking;
 
         var toolCalls = message?["tool_calls"]?.AsArray();
         if (toolCalls is { Count: > 0 })

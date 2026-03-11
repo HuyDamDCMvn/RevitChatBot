@@ -1,4 +1,4 @@
-import { BridgeMessage, MessageTypes } from '../types/messages';
+import { BridgeMessage, MessageTypes, AutomationMode } from '../types/messages';
 
 declare global {
   interface Window {
@@ -57,6 +57,43 @@ class RevitBridge {
       type: MessageTypes.SETTINGS_UPDATE,
       data,
     });
+  }
+
+  requestHealthCheck(): void {
+    this.send({ type: MessageTypes.HEALTH_CHECK });
+  }
+
+  requestModelInfo(): void {
+    this.send({ type: MessageTypes.MODEL_INFO });
+  }
+
+  sendPartialInput(content: string): void {
+    this.send({ type: 'partial_input', content });
+  }
+
+  setAutomationMode(mode: AutomationMode): void {
+    this.send({
+      type: MessageTypes.AUTOMATION_MODE_CHANGED,
+      content: mode,
+    });
+  }
+
+  respondToActionPlan(approved: boolean): void {
+    this.send({
+      type: MessageTypes.ACTION_PLAN_APPROVAL,
+      data: { approved },
+    });
+  }
+
+  setMemoryConsent(granted: boolean): void {
+    this.send({
+      type: MessageTypes.MEMORY_CONSENT,
+      data: { granted },
+    });
+  }
+
+  requestMemoryStats(): void {
+    this.send({ type: MessageTypes.MEMORY_STATS });
   }
 
   onMessage(handler: MessageHandler): () => void {

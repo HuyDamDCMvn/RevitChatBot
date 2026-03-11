@@ -48,7 +48,7 @@ public class ChatSession
         var round = 0;
         while (round < MaxToolRounds)
         {
-            var response = await _ollama.ChatAsync(messages, toolDefs, cancellationToken);
+            var response = await _ollama.ChatAsync(messages, toolDefs, cancellationToken: cancellationToken);
 
             if (response.ToolCalls is not { Count: > 0 })
             {

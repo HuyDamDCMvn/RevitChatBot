@@ -722,6 +722,299 @@ public static class RevitApiCheatSheet
         // For tables:
         "| ID | Size | System | Level |\n|---|---|---|---|"
         ```
+
+        ## TYPE HIERARCHY — Check specific types BEFORE general types (order matters!)
+        ```
+        // Element
+        // ├── MEPCurve (base for all linear MEP — has ConnectorManager directly)
+        // │   ├── Duct
+        // │   ├── Pipe
+        // │   ├── FlexDuct
+        // │   ├── FlexPipe
+        // │   ├── Conduit
+        // │   └── CableTray
+        // ├── FamilyInstance (fittings, equipment, terminals — has MEPModel.ConnectorManager)
+        // │   └── Panel (curtain wall — CHECK BEFORE FamilyInstance!)
+        // ├── HostObject
+        // │   ├── Wall
+        // │   ├── Floor
+        // │   ├── Ceiling
+        // │   └── RoofBase
+        // ├── CurveElement
+        // │   └── (ModelCurve, DetailCurve, etc.)
+        // ├── View
+        // │   ├── TableView
+        // │   │   └── ViewSchedule
+        // │   ├── View3D
+        // │   ├── ViewPlan
+        // │   ├── ViewSection
+        // │   └── ViewDrafting
+        // ├── SpatialElement
+        // │   ├── Room (using Autodesk.Revit.DB.Architecture;)
+        // │   └── Space (using Autodesk.Revit.DB.Mechanical;)
+        // ├── MEPSystem
+        // │   ├── MechanicalSystem
+        // │   ├── PipingSystem
+        // │   └── ElectricalSystem
+        // ├── DatumPlane
+        // │   ├── Level
+        // │   ├── Grid
+        // │   └── ReferencePlane
+        // ├── IndependentTag
+        // ├── SunAndShadowSettings
+        // ├── BasePoint / InternalOrigin
+        // └── ElementType
+        //     ├── FamilySymbol
+        //     ├── WallType
+        //     ├── DuctType, PipeType, ConduitType, CableTrayType
+        //     ├── MechanicalSystemType, PipingSystemType
+        //     └── FloorType, CeilingType, RoofType
+
+        // PATTERN: Always use pattern matching, most-specific first:
+        if (elem is Panel panel) { /* before FamilyInstance */ }
+        else if (elem is FamilyInstance fi) { /* before Element */ }
+        else if (elem is Duct duct) { /* before MEPCurve */ }
+        else if (elem is Pipe pipe) { /* before MEPCurve */ }
+        else if (elem is Conduit conduit) { /* before MEPCurve */ }
+        else if (elem is CableTray tray) { /* before MEPCurve */ }
+        else if (elem is MEPCurve mc) { /* covers FlexDuct, FlexPipe, etc. */ }
+        else if (elem is ViewSchedule vs) { /* before TableView, View */ }
+        else if (elem is View3D v3d) { /* before View */ }
+        else if (elem is View view) { /* general View */ }
+        else if (elem is Wall wall) { /* before HostObject */ }
+        else if (elem is HostObject host) { /* covers Floor, Ceiling, Roof */ }
+
+        // Universal ConnectorManager pattern (use this instead of checking each type):
+        ConnectorManager cm = elem switch {
+            MEPCurve mc2 => mc2.ConnectorManager,
+            FamilyInstance fi2 => fi2.MEPModel?.ConnectorManager,
+            FabricationPart fp => fp.ConnectorManager,
+            _ => null
+        };
+        ```
+
+        ## NAMESPACE REFERENCE — Which type lives where
+        ```
+        // Autodesk.Revit.DB (base — ALWAYS imported)
+        //   Element, Document, FilteredElementCollector, Transaction, ElementId
+        //   XYZ, BoundingBoxXYZ, Curve, Line, Arc, Solid, Face, Edge, Mesh
+        //   ForgeTypeId, BuiltInParameter, BuiltInCategory, UnitTypeId, SpecTypeId
+        //   MEPCurve, FamilyInstance, FamilySymbol, ElementType
+        //   Wall, WallType, HostObject, View, View3D, ViewPlan, Level, Grid
+        //   Connector, ConnectorManager, ConnectorSet
+        //   InsulationLiningBase, CompoundStructure, CompoundStructureLayer
+        //   Parameter, Category, Color, LocationCurve, LocationPoint
+        //   BoundingBoxIntersectsFilter, ElementIntersectsElementFilter
+        //   ReferenceIntersector, Reference, Options
+        //   FabricationPart, IndependentTag, DatumPlane
+        //   GlobalParameter, SketchPlane, CurtainGrid, PlanViewRange
+        //   Workset, WorksetTable, PerformanceAdviser
+        //   OverrideGraphicSettings, ElementTransformUtils
+        //   TableView, ViewSchedule, ScheduleDefinition, SchedulableField
+        //   TableData, TableSectionData, FamilySizeTableManager
+        //   FailureMessage, UpdaterInfo, ModelPath
+        //   AssemblyInstance, BasePoint, InternalOrigin
+        //   AreaVolumeSettings, StructuralSettings, PrintManager
+
+        // Autodesk.Revit.DB.Mechanical (HVAC + Spaces)
+        //   Duct, FlexDuct, DuctType, MechanicalSystem, MechanicalSystemType
+        //   Space (MEP Space — NOT in base DB!)
+        //   MechanicalUtils (BreakCurve for ducts)
+        //   MEPSection
+
+        // Autodesk.Revit.DB.Plumbing (Piping)
+        //   Pipe, FlexPipe, PipeType, PipingSystem, PipingSystemType
+        //   PlumbingUtils (BreakCurve for pipes)
+
+        // Autodesk.Revit.DB.Electrical (Electrical)
+        //   CableTray, CableTrayType, Conduit, ConduitType
+        //   ElectricalSystem, Wire
+
+        // Autodesk.Revit.DB.Architecture
+        //   Room (NOT in base DB — common compile error!)
+
+        // Autodesk.Revit.DB.Structure
+        //   Rebar, StructuralSettings, AnalyticalElement
+
+        // Autodesk.Revit.DB.ExtensibleStorage
+        //   Schema, SchemaBuilder, Entity, Field, FieldBuilder
+
+        // Autodesk.Revit.DB.Visual
+        //   AssetProperties, AssetProperty
+
+        // Autodesk.Revit.DB.ExternalService
+        //   ExternalService
+
+        // Autodesk.Revit.DB.Lighting
+        //   LightFamily
+
+        // Autodesk.Revit.DB.PointClouds
+        //   PointCloudFilter
+
+        // Autodesk.Revit.UI (UI — rarely needed in codegen)
+        //   UIApplication, UIDocument, RibbonItem, RibbonPanel
+        ```
+
+        ## CONTEXT-AWARE API CALLS — Methods requiring specific parameters
+        ```
+        // === Methods needing VIEW parameter ===
+        element.IsHidden(activeView);                     // bool — needs active View, NOT null
+        element.CanBeHidden(activeView);                  // bool — needs active View
+        element.get_BoundingBox(null);                    // BoundingBoxXYZ — null = model coords
+        element.get_BoundingBox(activeView);              // BoundingBoxXYZ — view-specific (clipped)
+        element.get_Geometry(new Options { View = v });   // view-specific geometry
+        view.SetElementOverrides(elemId, overrides);      // needs the target View
+
+        // === Methods needing DOCUMENT parameter ===
+        InsulationLiningBase.GetInsulationIds(doc, elemId);  // TWO params: doc + elemId
+        Schema.Lookup(guid);                                 // static — returns null if not found
+        entity.Get<T>("FieldName");                          // may need ForgeTypeId overload in 2025
+        doc.GetElement(elementId);                           // standard lookup
+        reference.ConvertToStableRepresentation(doc);        // needs Document context
+
+        // === Methods with MULTIPLE OVERLOADS — pick the right one ===
+        element.GetMaterialIds(true);    // returnPaintMaterials = true
+        element.GetMaterialIds(false);   // returnPaintMaterials = false (most common)
+        entity.Get<T>("field");                         // 1-param: string only
+        entity.Get<T>("field", UnitTypeId.Millimeters); // 2-params: string + ForgeTypeId
+
+        // === DISABLED / DANGEROUS — NEVER call these in add-in code ===
+        // doc.Close();                    — CRASHES Revit process
+        // doc.Save();                     — May cause data loss without user consent
+        // app.OpenAndActivateDocument();  — Context switch issues in external events
+        // element.Delete();               — Use doc.Delete(elemId) instead
+        // RevitCommandId.PostCommand();   — Unreliable in external events
+
+        // === READONLY — These throw if you try to modify ===
+        // element.Id                      — always readonly
+        // element.UniqueId                — always readonly
+        // parameter.IsReadOnly            — CHECK before Set()
+        // document.IsReadOnly             — CHECK before Transaction
+
+        // === CompoundStructure access — NOT all types have it ===
+        if (wallType.GetCompoundStructure() is CompoundStructure cs)
+        {
+            var layers = cs.GetLayers();
+            foreach (var layer in layers)
+            {
+                double width = layer.Width;  // feet
+                MaterialFunctionAssignment func = layer.Function;
+                ElementId materialId = layer.MaterialId;
+            }
+        }
+        // Curtain walls, stacked walls return null!
+
+        // === ExtensibleStorage (Schema / Entity) ===
+        var schema = Schema.Lookup(new Guid("..."));
+        if (schema != null)
+        {
+            var entity = element.GetEntity(schema);
+            if (entity.IsValid())
+            {
+                var field = schema.GetField("FieldName");
+                if (field != null)
+                    var value = entity.Get<string>(field);
+            }
+        }
+        // Always null-check Schema.Lookup and check entity.IsValid()
+
+        // === ForgeTypeId parameter access (Revit 2025) ===
+        ForgeTypeId specTypeId = param.Definition.GetDataType();
+        ForgeTypeId groupTypeId = param.Definition.GetGroupTypeId();
+        bool isLength = specTypeId == SpecTypeId.Length;
+        bool isAngle = specTypeId == SpecTypeId.Angle;
+        ```
+
+        ## MEP SYSTEM CLASSIFICATION — COMPLETE REFERENCE
+        ```
+        // === HVAC Systems ===
+        MEPSystemClassification.SupplyAir         // Cấp gió (SA)
+        MEPSystemClassification.ReturnAir         // Hồi gió (RA)
+        MEPSystemClassification.ExhaustAir        // Thải/hút gió (EA)
+        MEPSystemClassification.OtherAir          // Gió khác
+
+        // === Hydronic (chilled/hot water loops) ===
+        MEPSystemClassification.SupplyHydronic    // Cấp nước lạnh/nóng (CHW-S, HW-S)
+        MEPSystemClassification.ReturnHydronic    // Hồi nước lạnh/nóng (CHW-R, HW-R)
+
+        // === Domestic Water ===
+        MEPSystemClassification.DomesticColdWater // Nước lạnh sinh hoạt (DCW)
+        MEPSystemClassification.DomesticHotWater  // Nước nóng sinh hoạt (DHW)
+
+        // === Sanitary / Drainage ===
+        MEPSystemClassification.Sanitary          // Nước thải (SAN)
+        MEPSystemClassification.Vent              // Thông hơi (V)
+
+        // === Fire Protection ===
+        MEPSystemClassification.FireProtectWet    // PCCC ướt (wet sprinkler)
+        MEPSystemClassification.FireProtectDry    // PCCC khô (dry sprinkler)
+        MEPSystemClassification.FireProtectPreaction // PCCC pre-action
+        MEPSystemClassification.FireProtectOther  // PCCC khác
+
+        // === Other ===
+        MEPSystemClassification.OtherPipe         // Ống khác (REPLACES "Storm" in 2025!)
+        MEPSystemClassification.Fitting           // Fitting (auto-classified)
+        MEPSystemClassification.Global            // Global system
+        MEPSystemClassification.PowerCircuit      // Electrical power
+        MEPSystemClassification.UndefinedSystemClassification // Not yet assigned
+
+        // Vietnamese mapping guide:
+        // "ống gió cấp"     → SupplyAir
+        // "ống gió hồi"     → ReturnAir
+        // "ống gió thải"    → ExhaustAir
+        // "ống lạnh" / "CHW" → SupplyHydronic / ReturnHydronic
+        // "ống nước nóng"    → DomesticHotWater (sinh hoạt) or SupplyHydronic (kỹ thuật)
+        // "ống nước lạnh"    → DomesticColdWater (sinh hoạt) or SupplyHydronic (kỹ thuật)
+        // "ống thoát"        → Sanitary
+        // "ống chữa cháy"   → FireProtectWet / FireProtectDry
+        // "ống mưa"          → OtherPipe (NO Storm in 2025!)
+        ```
+
+        ## CONNECTOR — DOMAIN-SPECIFIC PROPERTIES
+        ```
+        // Properties available depend on connector Domain. Accessing wrong domain throws!
+        if (c.Domain == Domain.DomainHvac)
+        {
+            DuctSystemType hvacSysType = c.DuctSystemType;  // SupplyAir, ReturnAir, ExhaustAir
+            double flow = c.Flow;                    // airflow (ft³/s)
+            double pressureDrop = c.PressureDrop;    // pressure (internal units)
+            double velocity = c.VelocityPressure;
+            double coeff = c.Coefficient;
+        }
+        else if (c.Domain == Domain.DomainPiping)
+        {
+            PipeSystemType pipeSysType = c.PipeSystemType; // DomesticColdWater, Sanitary, etc.
+            double flow = c.Flow;                    // flow rate (ft³/s)
+            double pressureDrop = c.PressureDrop;
+            double kCoeff = c.AssignedKCoefficient;
+        }
+        else if (c.Domain == Domain.DomainElectrical)
+        {
+            ElectricalSystemType elecSysType = c.ElectricalSystemType;
+            double demand = c.Demand;
+            // NO Flow, NO PressureDrop — will throw InvalidOperationException!
+        }
+        // Domain.DomainCableTrayConduit — minimal properties, just origin/direction
+
+        // === Connector direction & classification ===
+        Transform t = c.CoordinateSystem;
+        XYZ connDirection = t.BasisZ;   // outward normal of connector face
+        XYZ connOrigin = t.Origin;      // connector position
+
+        // Classify connector pair relationship:
+        double dot = c1.CoordinateSystem.BasisZ.DotProduct(c2.CoordinateSystem.BasisZ);
+        // dot ≈ -1.0  → facing each other (main-to-main, inline)
+        // dot ≈  0.0  → perpendicular (main-to-branch)
+        // dot ≈ +1.0  → same direction (parallel, likely wrong connection)
+
+        // === Connected elements traversal ===
+        foreach (Connector other in c.AllRefs)
+        {
+            if (other?.Owner == null) continue;
+            if (other.ConnectorType == ConnectorType.Logical) continue; // skip system logical connectors
+            Element connected = other.Owner;
+        }
+        ```
         """;
 
     public static string GetCommonErrorFixes() => """
@@ -819,5 +1112,59 @@ public static class RevitApiCheatSheet
 
         ERROR: "'RoutingPreferenceManager' not found"
         FIX: Access via PipeType.RoutingPreferenceManager or DuctType.RoutingPreferenceManager. Cast GetTypeId() first.
+
+        ERROR: "Schema.Lookup returned null"
+        FIX: Schema may not exist in this document. Always null-check: var schema = Schema.Lookup(guid); if (schema == null) return "Schema not found.";
+
+        ERROR: "Entity.Get failed — field not found"
+        FIX: Check field exists: if (entity.IsValid() && entity.Schema.GetField("name") != null) entity.Get<T>("name");
+
+        ERROR: "'entity.IsValid' does not exist"
+        FIX: Use entity.IsValid() — it's a method, not a property. Requires parentheses.
+
+        ERROR: "Connector.Flow threw InvalidOperationException"
+        FIX: Flow/PressureDrop only available for DomainHvac/DomainPiping. Check domain first: if (c.Domain == Domain.DomainHvac)
+
+        ERROR: "Connector.DuctSystemType threw InvalidOperationException"
+        FIX: DuctSystemType only for DomainHvac. PipeSystemType only for DomainPiping. ElectricalSystemType only for DomainElectrical.
+
+        ERROR: "CompoundStructure is null"
+        FIX: Not all WallTypes have CompoundStructure (curtain walls, stacked walls don't). Check: if (wallType.GetCompoundStructure() is CompoundStructure cs)
+
+        ERROR: "ForgeTypeId comparison with == failed"
+        FIX: ForgeTypeId supports == operator. Use: specTypeId == SpecTypeId.Length. Ensure both sides are ForgeTypeId.
+
+        ERROR: "'SpecTypeId' does not contain 'xxx'"
+        FIX: Common SpecTypeId values: Length, Area, Volume, Angle, Flow, HvacVelocity, PipingVelocity, DuctSize, PipeSize, HvacPressure, PipingPressure, PipeSlope
+
+        ERROR: "parameter.Definition.ParameterGroup is obsolete"
+        FIX: Use param.Definition.GetGroupTypeId() which returns ForgeTypeId (Revit 2025).
+
+        ERROR: "'Panel' is ambiguous between Autodesk.Revit.DB and System.Windows.Controls"
+        FIX: Use full namespace: Autodesk.Revit.DB.Panel or add alias.
+
+        ERROR: "Cannot cast Element to Room"
+        FIX: Add: using Autodesk.Revit.DB.Architecture; Then: if (element is Room room) { ... }
+
+        ERROR: "Cannot cast Element to Space"
+        FIX: Add: using Autodesk.Revit.DB.Mechanical; Then: if (element is Space space) { ... }
+
+        ERROR: "element.GetEntity(schema) returned invalid entity"
+        FIX: Entity may be empty. Check: var entity = elem.GetEntity(schema); if (entity.IsValid()) { ... }
+
+        ERROR: "'View3D' does not contain a definition for 'IsSectionBoxActive'"
+        FIX: Property exists. Check using: if (view3d.IsSectionBoxActive) { var box = view3d.GetSectionBox(); }
+
+        ERROR: "MEPSystem is null for this element"
+        FIX: Not all MEP elements belong to a system (unassigned). Check null: var sys = duct.MEPSystem; if (sys != null) { ... }
+
+        ERROR: "FamilyInstance.MEPModel is null"
+        FIX: Not all FamilyInstances have MEP connectors. Furniture, structural elements return null. Check: fi.MEPModel?.ConnectorManager
+
+        ERROR: "GetSubComponentIds returned empty collection"
+        FIX: Only nested family instances have sub-components. Check: var subIds = fi.GetSubComponentIds(); if (subIds.Count > 0) { ... }
+
+        ERROR: "'ElementType' does not contain 'FamilyName'"
+        FIX: FamilyName is on FamilySymbol, not ElementType. Cast: if (elemType is FamilySymbol fs) familyName = fs.FamilyName;
         """;
 }

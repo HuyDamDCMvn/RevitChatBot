@@ -21,6 +21,12 @@ public class ChatMessage
     /// </summary>
     public string? ToolName { get; set; }
 
+    /// <summary>
+    /// For thinking models (e.g. QwQ, DeepSeek-R1): the model's internal reasoning
+    /// process returned in the "thinking" field when think=true.
+    /// </summary>
+    public string? Thinking { get; set; }
+
     public static ChatMessage FromSystem(string content) =>
         new() { Role = ChatRole.System, Content = content };
 

@@ -24,4 +24,16 @@ public static class BridgeMessageTypes
     public const string ClarificationRequest = "clarification_request";
     public const string ClarificationResponse = "clarification_response";
     public const string PartialIntent = "partial_intent";
+    public const string HealthCheck = "health_check";
+    public const string HealthStatus = "health_status";
+    public const string ModelInfo = "model_info";
+    public const string ModelInfoResponse = "model_info_response";
+    public const string AutomationModeChanged = "automation_mode_changed";
+    public const string ActionPlanReview = "action_plan_review";
+    public const string ActionPlanApproval = "action_plan_approval";
+    public const string WarningsDelta = "warnings_delta";
+    public const string MemoryConsent = "memory_consent";
+    public const string MemoryStats = "memory_stats";
+    public const string VisionAnalysis = "vision_analysis";
+    public const string ContextSnapshot = "context_snapshot";
 }

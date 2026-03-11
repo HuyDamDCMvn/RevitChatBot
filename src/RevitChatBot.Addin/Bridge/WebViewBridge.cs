@@ -25,9 +25,12 @@ public class WebViewBridge : IDisposable
     private ChatSessionV2? _chatSession;
     private OllamaService? _ollamaService;
     private RevitEventHandler? _eventHandler;
+    private RevitContextEventHooks? _contextEventHooks;
+    private RevitContextCache _contextCache = new();
     private KnowledgeManager? _knowledgeManager;
     private KnowledgeContextProvider? _knowledgeContextProvider;
     private MemoryManager? _memoryManager;
+    private AgentLogger? _agentLogger;
     private readonly JsonSerializerOptions _jsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -59,21 +62,33 @@ public class WebViewBridge : IDisposable
         _eventHandler = new RevitEventHandler();
         _eventHandler.Register(_uiApp);
 
+        _contextCache = new RevitContextCache();
+        _contextEventHooks = new RevitContextEventHooks(_uiApp, _contextCache);
+        _contextEventHooks.Subscribe();
+
         _ollamaService = new OllamaService();
         var skillRegistry = new SkillRegistry();
         var skillContext = new SkillContext
         {
             RevitDocument = _uiApp.ActiveUIDocument?.Document,
             RevitApiInvoker = async (action) =>
-                await _eventHandler.ExecuteAsync(doc => action(doc))
+                await _eventHandler.ExecuteAsync(doc => action(doc)),
+            Extra = { ["contextCache"] = _contextCache }
         };
         var skillExecutor = new SkillExecutor(skillRegistry, skillContext);
         var contextManager = new ContextManager();
         contextManager.SetRevitDocument(_uiApp.ActiveUIDocument?.Document);
+        contextManager.SetContextCache(_contextCache);
+
+        var addinDir = Path.GetDirectoryName(
+            System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+        _agentLogger = new AgentLogger(Path.Combine(addinDir, "logs"));
 
         RegisterMEPComponents(skillRegistry, contextManager);
         RegisterKnowledge(skillRegistry, contextManager);
         RegisterDynamicCode(skillRegistry);
+        RegisterWebSkills(skillRegistry);
+        RegisterVisionSkill(skillRegistry);
         InitializeQueryUnderstanding(skillRegistry);
         InitializeLLMIntelligence();
 
@@ -94,7 +109,8 @@ public class WebViewBridge : IDisposable
             fewShotLearning: _fewShotLearning,
             dynamicGlossary: _dynamicGlossary,
             skillFeedback: _skillFeedback,
-            promptCache: _promptCache);
+            promptCache: _promptCache,
+            agentLogger: _agentLogger);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -126,6 +142,65 @@ public class WebViewBridge : IDisposable
                 Content = description
             });
             return true;
+        };
+
+        _chatSession.OnActionPlanReview += async actionPlan =>
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.ActionPlanReview,
+                Content = actionPlan.Summary,
+                Data = new Dictionary<string, object?>
+                {
+                    ["actions"] = actionPlan.Actions.Select(a => new
+                    {
+                        a.ToolName, a.Description, a.IsDestructive, a.Arguments
+                    }).ToList(),
+                    ["riskLevel"] = actionPlan.RiskLevel,
+                    ["estimatedElementsAffected"] = actionPlan.EstimatedElementsAffected
+                }
+            });
+            return true;
+        };
+
+        _chatSession.OnCaptureWarnings += async () =>
+        {
+            try
+            {
+                var result = await _eventHandler!.ExecuteAsync(doc =>
+                {
+                    var warnings = doc.GetWarnings();
+                    return new WarningsCaptureResult
+                    {
+                        WarningCount = warnings.Count,
+                        WarningDetails = warnings
+                            .Take(50)
+                            .Select(w => w.GetDescriptionText())
+                            .ToList()
+                    };
+                });
+                return result as WarningsCaptureResult ?? new WarningsCaptureResult();
+            }
+            catch
+            {
+                return new WarningsCaptureResult();
+            }
+        };
+
+        _contextCache.OnContextChanged += () =>
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.ContextSnapshot,
+                Data = new Dictionary<string, object?>
+                {
+                    ["view"] = _contextCache.CurrentView?.ViewName,
+                    ["viewType"] = _contextCache.CurrentView?.ViewType,
+                    ["selectionCount"] = _contextCache.CurrentSelection?.Count,
+                    ["categories"] = _contextCache.CurrentSelection?.Categories,
+                    ["automationMode"] = _contextCache.AutomationMode.ToString()
+                }
+            });
         };
 
         _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
@@ -219,6 +294,31 @@ public class WebViewBridge : IDisposable
         catch { }
     }
 
+    private void RegisterWebSkills(SkillRegistry registry)
+    {
+        try
+        {
+            var opts = _ollamaService!.GetCurrentOptions();
+            if (string.IsNullOrWhiteSpace(opts.CloudBaseUrl) ||
+                string.IsNullOrWhiteSpace(opts.CloudApiKey))
+                return;
+
+            registry.Register(new OllamaWebSearchSkill(opts.CloudBaseUrl, opts.CloudApiKey));
+            registry.Register(new OllamaWebFetchSkill(opts.CloudBaseUrl, opts.CloudApiKey));
+        }
+        catch { }
+    }
+
+    private void RegisterVisionSkill(SkillRegistry registry)
+    {
+        try
+        {
+            var visionSkill = new AnalyzeViewImageSkill(_ollamaService!);
+            registry.Register(visionSkill);
+        }
+        catch { }
+    }
+
     private void InitializeQueryUnderstanding(SkillRegistry skillRegistry)
     {
         try
@@ -278,6 +378,30 @@ public class WebViewBridge : IDisposable
             if (_fewShotLearning != null) tasks.Add(_fewShotLearning.LoadAsync());
             if (_dynamicGlossary != null) tasks.Add(_dynamicGlossary.LoadAsync());
             await Task.WhenAll(tasks);
+
+            await AutoDetectContextLengthAsync();
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Query model info via /api/show and update ContextWindowOptimizer with actual context length.
+    /// </summary>
+    private async Task AutoDetectContextLengthAsync()
+    {
+        if (_ollamaService is null || _contextOptimizer is null) return;
+        try
+        {
+            var info = await _ollamaService.ShowModelAsync();
+            if (info is { ContextLength: > 0 })
+            {
+                _contextOptimizer.UpdateMaxTokens(info.ContextLength);
+                _ollamaService.UpdateOptions(opts =>
+                {
+                    if (opts.NumCtx is null || opts.NumCtx < info.ContextLength)
+                        opts.NumCtx = info.ContextLength;
+                });
+            }
         }
         catch { }
     }
@@ -326,15 +450,7 @@ public class WebViewBridge : IDisposable
     {
         try
         {
-            var addinDir = Path.GetDirectoryName(
-                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
-            var memoryDir = Path.Combine(addinDir, "memory");
-            var memory = new MemoryManager(memoryDir, ollama);
-
-            contextManager.Register(new MemoryContextProvider(memory));
-
-            _skillFeedback = new SkillSuccessFeedback(memory.Analytics);
-
+            var memory = new MemoryManager(ollama, contextManager);
             return memory;
         }
         catch
@@ -404,6 +520,26 @@ public class WebViewBridge : IDisposable
 
                 case "partial_input":
                     HandlePartialInput(message.Content ?? "");
+                    break;
+
+                case BridgeMessageTypes.HealthCheck:
+                    await HandleHealthCheckAsync();
+                    break;
+
+                case BridgeMessageTypes.ModelInfo:
+                    await HandleModelInfoAsync();
+                    break;
+
+                case BridgeMessageTypes.AutomationModeChanged:
+                    HandleAutomationModeChange(message.Content ?? "");
+                    break;
+
+                case BridgeMessageTypes.MemoryConsent:
+                    HandleMemoryConsent(message.Data);
+                    break;
+
+                case BridgeMessageTypes.MemoryStats:
+                    HandleMemoryStatsRequest();
                     break;
             }
         }
@@ -476,6 +612,83 @@ public class WebViewBridge : IDisposable
         }
     }
 
+    private async Task HandleHealthCheckAsync()
+    {
+        if (_ollamaService is null) return;
+        try
+        {
+            var available = await _ollamaService.IsAvailableAsync();
+            var running = await _ollamaService.ListRunningModelsAsync();
+            var models = await _ollamaService.ListModelsAsync();
+
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.HealthStatus,
+                Data = new Dictionary<string, object?>
+                {
+                    ["available"] = available,
+                    ["runningModels"] = running.Select(m => new Dictionary<string, object?>
+                    {
+                        ["name"] = m.Name,
+                        ["parameterSize"] = m.ParameterSize,
+                        ["quantization"] = m.QuantizationLevel,
+                        ["sizeMB"] = m.Size / (1024 * 1024),
+                        ["vramMB"] = m.SizeVram / (1024 * 1024),
+                        ["expiresAt"] = m.ExpiresAt.ToString("o")
+                    }).ToList(),
+                    ["installedModels"] = models.Select(m => new Dictionary<string, object?>
+                    {
+                        ["name"] = m.Name,
+                        ["parameterSize"] = m.ParameterSize,
+                        ["quantization"] = m.QuantizationLevel,
+                        ["sizeMB"] = m.Size / (1024 * 1024)
+                    }).ToList()
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.HealthStatus,
+                Data = new Dictionary<string, object?>
+                {
+                    ["available"] = false,
+                    ["error"] = ex.Message
+                }
+            });
+        }
+    }
+
+    private async Task HandleModelInfoAsync()
+    {
+        if (_ollamaService is null) return;
+        try
+        {
+            var info = await _ollamaService.ShowModelAsync();
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.ModelInfoResponse,
+                Data = info != null ? new Dictionary<string, object?>
+                {
+                    ["modelName"] = info.ModelName,
+                    ["contextLength"] = info.ContextLength,
+                    ["family"] = info.Family,
+                    ["parameterSize"] = info.ParameterSize,
+                    ["quantization"] = info.QuantizationLevel
+                } : new Dictionary<string, object?> { ["error"] = "Model not found" }
+            });
+        }
+        catch (Exception ex)
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.ModelInfoResponse,
+                Data = new Dictionary<string, object?> { ["error"] = ex.Message }
+            });
+        }
+    }
+
     private void HandleSettingsUpdate(Dictionary<string, object?>? data)
     {
         if (data is null || _ollamaService is null) return;
@@ -489,6 +702,60 @@ public class WebViewBridge : IDisposable
                 opts.Temperature = t;
             if (data.TryGetValue("ollamaUrl", out var url) && url is string u)
                 opts.BaseUrl = u;
+            if (data.TryGetValue("cloudBaseUrl", out var cloudUrl) && cloudUrl is string cu)
+                opts.CloudBaseUrl = cu;
+            if (data.TryGetValue("cloudApiKey", out var cloudKey) && cloudKey is string ck)
+                opts.CloudApiKey = ck;
+            if (data.TryGetValue("cloudModel", out var cloudModel) && cloudModel is string cm)
+                opts.CloudModel = cm;
+            if (data.TryGetValue("think", out var think) && think is not null
+                && bool.TryParse(think.ToString(), out var thinkVal))
+                opts.Think = thinkVal;
+            if (data.TryGetValue("logprobs", out var lp) && lp is not null
+                && bool.TryParse(lp.ToString(), out var lpVal))
+                opts.Logprobs = lpVal;
+        });
+    }
+
+    private void HandleAutomationModeChange(string modeName)
+    {
+        if (Enum.TryParse<AutomationMode>(modeName, ignoreCase: true, out var mode))
+        {
+            _contextCache.AutomationMode = mode;
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.AutomationModeChanged,
+                Content = mode.ToString()
+            });
+        }
+    }
+
+    private void HandleMemoryConsent(Dictionary<string, object?>? data)
+    {
+        if (data == null) return;
+        if (data.TryGetValue("granted", out var grantedObj) && grantedObj is not null
+            && bool.TryParse(grantedObj.ToString(), out var granted))
+        {
+            _contextCache.MemoryConsentGranted = granted;
+            if (!granted)
+                _memoryManager?.ClearLongTermMemory();
+        }
+    }
+
+    private void HandleMemoryStatsRequest()
+    {
+        var stats = _memoryManager?.GetStats();
+        SendToUI(new BridgeMessage
+        {
+            Type = BridgeMessageTypes.MemoryStats,
+            Data = new Dictionary<string, object?>
+            {
+                ["shortTermEntries"] = stats?.ShortTermEntries ?? 0,
+                ["longTermEntries"] = stats?.LongTermEntries ?? 0,
+                ["consentGranted"] = stats?.ConsentGranted ?? false,
+                ["oldestLongTermUtc"] = stats?.OldestLongTermUtc?.ToString("o"),
+                ["nextExpiryUtc"] = stats?.NextExpiryUtc?.ToString("o")
+            }
         });
     }
 
@@ -512,6 +779,8 @@ public class WebViewBridge : IDisposable
         }
         catch { }
 
+        _contextEventHooks?.Dispose();
+        _agentLogger?.Dispose();
         _eventHandler?.Unregister();
         if (_webView.CoreWebView2 is not null)
             _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
