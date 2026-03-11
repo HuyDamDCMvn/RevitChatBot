@@ -15,11 +15,11 @@ public class SkillContext
     public Dictionary<string, object?> Extra { get; set; } = new();
 
     /// <summary>
-    /// Visualization manager for DirectContext3D rendering.
-    /// Skills can use this to highlight elements, show clashes, or visualize routes.
-    /// Null when visualization is not available (no active 3D view).
-    /// Access via Extra["visualization_manager"] for loose coupling, or cast directly.
+    /// Sends a BridgeMessage directly to the frontend UI.
+    /// Skills can use this to push images, charts, or other rich content.
     /// </summary>
+    public Action<string, string?, Dictionary<string, object?>?>? SendToUI { get; set; }
+
     public object? VisualizationManager
     {
         get => Extra.GetValueOrDefault("visualization_manager");

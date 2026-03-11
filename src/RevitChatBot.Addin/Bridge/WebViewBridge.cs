@@ -114,6 +114,9 @@ public class WebViewBridge : IDisposable
         if (_vizManager is not null)
             skillContext.VisualizationManager = _vizManager;
 
+        skillContext.SendToUI = (type, content, data) =>
+            SendToUI(new BridgeMessage { Type = type, Content = content, Data = data });
+
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
         InitializeSelfTraining(skillRegistry, skillExecutor);
 

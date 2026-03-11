@@ -1,8 +1,58 @@
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { Components } from 'react-markdown';
 import { ChatMessage } from '../types/messages';
+import { MermaidBlock } from './MermaidBlock';
+import { ChartBlock } from './ChartBlock';
 
 interface Props {
   message: ChatMessage;
+}
+
+const markdownComponents: Components = {
+  code({ className, children, ...props }) {
+    const lang = className?.replace('language-', '') ?? '';
+    const text = String(children).replace(/\n$/, '');
+
+    if (lang === 'mermaid') return <MermaidBlock code={text} />;
+    if (lang === 'chart' || lang === 'json-chart') return <ChartBlock code={text} />;
+
+    if (className) {
+      return (
+        <pre className="rounded bg-gray-200 p-2 text-xs overflow-auto my-1">
+          <code className={className} {...props}>{children}</code>
+        </pre>
+      );
+    }
+
+    return (
+      <code className="rounded bg-gray-200 px-1.5 py-0.5 text-xs font-mono" {...props}>
+        {children}
+      </code>
+    );
+  },
+};
+
+function ImageGallery({ images }: { images: ChatMessage['images'] }) {
+  if (!images || images.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {images.map((img, i) => (
+        <figure key={i} className="max-w-full">
+          <img
+            src={`data:${img.mimeType ?? 'image/png'};base64,${img.base64}`}
+            alt={img.caption ?? `Image ${i + 1}`}
+            className="rounded-lg max-h-64 object-contain cursor-pointer hover:opacity-90 transition-opacity"
+            onClick={() => {
+              const w = window.open();
+              if (w) {
+                w.document.write(`<img src="data:${img.mimeType ?? 'image/png'};base64,${img.base64}" style="max-width:100%;height:auto" />`);
+              }
+            }}
+          />
+          {img.caption && <figcaption className="text-[10px] text-gray-500 mt-0.5">{img.caption}</figcaption>}
+        </figure>
+      ))}
+    </div>
+  );
 }
 
 function SystemBubble({ message }: Props) {
@@ -91,10 +141,11 @@ export function MessageBubble({ message }: Props) {
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="prose prose-sm max-w-none prose-p:my-1 prose-pre:bg-gray-200 prose-pre:text-gray-800 prose-code:text-revit-700">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <ReactMarkdown components={markdownComponents}>{message.content}</ReactMarkdown>
             {message.streaming && (
               <span className="inline-block w-2 h-4 ml-0.5 -mb-0.5 bg-revit-500 animate-pulse rounded-sm" />
             )}
+            <ImageGallery images={message.images} />
           </div>
         )}
         <div

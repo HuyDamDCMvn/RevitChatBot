@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge } from '../services/bridge';
-import { ActionPlanData, ChatMessage, MessageTypes, SkillInfo } from '../types/messages';
+import { ActionPlanData, ChatMessage, ImageAttachment, MessageTypes, SkillInfo } from '../types/messages';
 
 let nextId = 1;
 const genId = () => `msg-${nextId++}`;
@@ -151,6 +151,34 @@ export function useRevitBridge() {
             },
           });
           pendingSkillRef.current = null;
+          break;
+        }
+
+        case MessageTypes.VIEW_SNAPSHOT: {
+          const snapData = msg.data as {
+            base64?: string;
+            mimeType?: string;
+            caption?: string;
+            analysis?: string;
+          } | undefined;
+          if (snapData?.base64) {
+            const img: ImageAttachment = {
+              base64: snapData.base64,
+              mimeType: snapData.mimeType ?? 'image/png',
+              caption: snapData.caption,
+            };
+            setThinkingText(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: genId(),
+                role: 'assistant',
+                content: snapData.analysis ?? snapData.caption ?? 'View snapshot',
+                timestamp: Date.now(),
+                images: [img],
+              },
+            ]);
+          }
           break;
         }
 

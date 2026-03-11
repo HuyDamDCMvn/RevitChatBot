@@ -117,6 +117,17 @@ public class AnalyzeViewImageSkill : ISkill
                 var analysis = await ((OllamaService)_ollama).GenerateAsync(
                     prompt, images: [base64], cancellationToken: cancellationToken);
 
+                context.SendToUI?.Invoke(
+                    "view_snapshot",
+                    $"View: {viewName}",
+                    new Dictionary<string, object?>
+                    {
+                        ["base64"] = base64,
+                        ["mimeType"] = "image/png",
+                        ["caption"] = $"{viewName} ({viewType})",
+                        ["analysis"] = analysis,
+                    });
+
                 return SkillResult.Ok(
                     $"Vision analysis of view '{viewName}'",
                     new { viewName, viewType, analysis });

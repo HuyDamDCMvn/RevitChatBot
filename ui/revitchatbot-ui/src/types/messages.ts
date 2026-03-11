@@ -15,6 +15,19 @@ export interface ChatMessage {
   variant?: 'thinking' | 'clarification' | 'action_plan' | 'confirmation';
   clarificationOptions?: string[];
   actionPlan?: ActionPlanData;
+  images?: ImageAttachment[];
+}
+
+export interface ImageAttachment {
+  base64: string;
+  mimeType?: string;
+  caption?: string;
+}
+
+export interface ChartDataItem {
+  name: string;
+  value: number;
+  [key: string]: unknown;
 }
 
 export interface SkillInfo {
@@ -126,4 +139,5 @@ export const MessageTypes = {
   MEMORY_STATS: 'memory_stats',
   VISION_ANALYSIS: 'vision_analysis',
   CONTEXT_SNAPSHOT: 'context_snapshot',
+  VIEW_SNAPSHOT: 'view_snapshot',
 } as const;

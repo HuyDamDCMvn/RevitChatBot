@@ -24,7 +24,7 @@ public class OllamaService : IOllamaService, IDisposable
     private static HttpClient CreateHttpClient(string baseUrl) => new()
     {
         BaseAddress = new Uri(baseUrl),
-        Timeout = TimeSpan.FromMinutes(5)
+        Timeout = TimeSpan.FromMinutes(10)
     };
 
     public async Task<ChatMessage> ChatAsync(
