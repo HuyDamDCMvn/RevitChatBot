@@ -3,7 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
-using Autodesk.Revit.UI;
+using RevitChatBot.Addin.Commands;
 using RevitChatBot.Addin.Handlers;
 using RevitChatBot.Core.Agent;
 using RevitChatBot.Core.CodeGen;
@@ -21,11 +21,10 @@ namespace RevitChatBot.Addin.Bridge;
 public class WebViewBridge : IDisposable
 {
     private readonly WebView2 _webView;
-    private readonly UIApplication _uiApp;
     private readonly RevitEventHandler _eventHandler;
+    private readonly BridgeInitData _initData;
     private ChatSessionV2? _chatSession;
     private OllamaService? _ollamaService;
-    private RevitContextEventHooks? _contextEventHooks;
     private RevitContextCache _contextCache = new();
     private KnowledgeManager? _knowledgeManager;
     private KnowledgeContextProvider? _knowledgeContextProvider;
@@ -51,31 +50,29 @@ public class WebViewBridge : IDisposable
     private SkillSuccessFeedback? _skillFeedback;
     private PromptCache? _promptCache;
 
-    public WebViewBridge(WebView2 webView, UIApplication uiApp, RevitEventHandler eventHandler)
+    public WebViewBridge(WebView2 webView, RevitEventHandler eventHandler, BridgeInitData initData)
     {
         _webView = webView;
-        _uiApp = uiApp;
         _eventHandler = eventHandler;
+        _initData = initData;
     }
 
     public void Initialize()
     {
-        _contextCache = new RevitContextCache();
-        _contextEventHooks = new RevitContextEventHooks(_uiApp, _contextCache);
-        _contextEventHooks.Subscribe();
+        _contextCache = _initData.ContextCache;
 
         _ollamaService = new OllamaService();
         var skillRegistry = new SkillRegistry();
         var skillContext = new SkillContext
         {
-            RevitDocument = _uiApp.ActiveUIDocument?.Document,
+            RevitDocument = _initData.Document,
             RevitApiInvoker = async (action) =>
                 await _eventHandler.ExecuteAsync(doc => action(doc)),
             Extra = { ["contextCache"] = _contextCache }
         };
         var skillExecutor = new SkillExecutor(skillRegistry, skillContext);
         var contextManager = new ContextManager();
-        contextManager.SetRevitDocument(_uiApp.ActiveUIDocument?.Document);
+        contextManager.SetRevitDocument(_initData.Document);
         contextManager.SetContextCache(_contextCache);
 
         var addinDir = Path.GetDirectoryName(
@@ -462,7 +459,7 @@ public class WebViewBridge : IDisposable
         if (_chatSession is null || _memoryManager is null) return;
         try
         {
-            var projectTitle = _uiApp.ActiveUIDocument?.Document?.Title ?? "default";
+            var projectTitle = _initData.Document?.Title ?? "default";
             await _chatSession.InitializeMemoryAsync(projectTitle);
 
             var restored = _chatSession.History;
@@ -777,7 +774,6 @@ public class WebViewBridge : IDisposable
         }
         catch { }
 
-        _contextEventHooks?.Dispose();
         _agentLogger?.Dispose();
         if (_webView.CoreWebView2 is not null)
             _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;

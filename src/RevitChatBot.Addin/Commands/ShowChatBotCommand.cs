@@ -1,7 +1,9 @@
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitChatBot.Addin.Handlers;
 using RevitChatBot.Addin.Views;
+using RevitChatBot.Core.Context;
 
 namespace RevitChatBot.Addin.Commands;
 
@@ -10,6 +12,7 @@ namespace RevitChatBot.Addin.Commands;
 public class ShowChatBotCommand : IExternalCommand
 {
     private static ChatBotWindow? _window;
+    private static RevitContextEventHooks? _contextHooks;
 
     public Result Execute(
         ExternalCommandData commandData,
@@ -33,7 +36,21 @@ public class ShowChatBotCommand : IExternalCommand
                 return Result.Succeeded;
             }
 
-            _window = new ChatBotWindow(uiApp, eventHandler);
+            var doc = uiApp.ActiveUIDocument?.Document;
+
+            var contextCache = new RevitContextCache();
+            _contextHooks?.Dispose();
+            _contextHooks = new RevitContextEventHooks(uiApp, contextCache);
+            _contextHooks.Subscribe();
+
+            var initData = new BridgeInitData
+            {
+                Document = doc,
+                ContextCache = contextCache,
+                ContextHooks = _contextHooks
+            };
+
+            _window = new ChatBotWindow(eventHandler, initData);
             _window.Show();
 
             return Result.Succeeded;
@@ -44,4 +61,11 @@ public class ShowChatBotCommand : IExternalCommand
             return Result.Failed;
         }
     }
+}
+
+public class BridgeInitData
+{
+    public Document? Document { get; set; }
+    public RevitContextCache ContextCache { get; set; } = new();
+    public RevitContextEventHooks? ContextHooks { get; set; }
 }

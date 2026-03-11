@@ -1,22 +1,22 @@
 using System.IO;
 using System.Windows;
-using Autodesk.Revit.UI;
 using Microsoft.Web.WebView2.Core;
 using RevitChatBot.Addin.Bridge;
+using RevitChatBot.Addin.Commands;
 using RevitChatBot.Addin.Handlers;
 
 namespace RevitChatBot.Addin.Views;
 
 public partial class ChatBotWindow : Window
 {
-    private readonly UIApplication _uiApp;
     private readonly RevitEventHandler _eventHandler;
+    private readonly BridgeInitData _initData;
     private WebViewBridge? _bridge;
 
-    public ChatBotWindow(UIApplication uiApp, RevitEventHandler eventHandler)
+    public ChatBotWindow(RevitEventHandler eventHandler, BridgeInitData initData)
     {
-        _uiApp = uiApp;
         _eventHandler = eventHandler;
+        _initData = initData;
         InitializeComponent();
         Loaded += OnLoaded;
         Closing += OnClosing;
@@ -32,7 +32,7 @@ public partial class ChatBotWindow : Window
 
             await WebView.EnsureCoreWebView2Async(env);
 
-            _bridge = new WebViewBridge(WebView, _uiApp, _eventHandler);
+            _bridge = new WebViewBridge(WebView, _eventHandler, _initData);
             _bridge.Initialize();
 
             var uiPath = FindUiPath();
