@@ -2053,5 +2053,177 @@ public static class CodeExamplesLibrary
             }
         }
         ```
+
+        === FLUENT COLLECTOR EXAMPLES (preferred — use FluentCollector for optimized queries) ===
+
+        ### EXAMPLE 46: FluentCollector — Multi-criteria filter with native optimization
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using RevitChatBot.RevitServices;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                // FluentCollector applies native Revit filters first (fast),
+                // then C# post-filters only when needed (OnLevel by name, InSystem, InRoom).
+                var ducts = new FluentCollector(doc)
+                    .OfCategory(BuiltInCategory.OST_DuctCurves)
+                    .WhereElementIsNotElementType()
+                    .OnLevel("Level 1")
+                    .InSystem("Supply Air")
+                    .ToList();
+
+                var lines = new List<string> { $"Supply Air ducts on Level 1: {ducts.Count}" };
+                foreach (var d in ducts.Take(20))
+                {
+                    lines.Add($"  ID:{d.Id} {d.GetSize()} L={d.GetLengthMeters():F1}m sys={d.GetSystemName()}");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 47: FluentCollector — Parameter filter with ElementExtensions
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using RevitChatBot.RevitServices;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                // WhereParameter with BuiltInParameter uses native ElementParameterFilter (fast).
+                // WhereParameter with string name uses post-filter (flexible).
+                var largePipes = new FluentCollector(doc)
+                    .OfCategory(BuiltInCategory.OST_PipeCurves)
+                    .WhereElementIsNotElementType()
+                    .WhereParameter("Diameter", FilterOperator.Greater, 100.0)
+                    .ToList();
+
+                var lines = new List<string> { $"Pipes with Diameter > 100: {largePipes.Count}" };
+                foreach (var p in largePipes.Take(20))
+                {
+                    lines.Add($"  ID:{p.Id} {p.GetSize()} lvl={p.GetLevelName(doc)} type={p.GetTypeName(doc)}");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 48: FluentCollector — Room-based filter + summary
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using RevitChatBot.RevitServices;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                // InRoom finds rooms/spaces by name, then filters elements
+                // by bounding box overlap. Falls back to MEP Spaces if no Rooms match.
+                var equipment = new FluentCollector(doc)
+                    .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
+                    .WhereElementIsNotElementType()
+                    .InRoom("Server Room")
+                    .ToList();
+
+                if (equipment.Count == 0) return "No mechanical equipment in Server Room.";
+
+                var lines = new List<string> { $"Equipment in Server Room ({equipment.Count}):" };
+                foreach (var e in equipment)
+                {
+                    lines.Add($"  ID:{e.Id} {e.GetFamilyName()} — {e.GetTypeName(doc)}");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 49: FluentCollector — Count and compare across levels
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using RevitChatBot.RevitServices;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var levels = new FluentCollector(doc)
+                    .OfClass<Level>()
+                    .ToList<Level>()
+                    .OrderBy(l => l.Elevation)
+                    .ToList();
+
+                var lines = new List<string> { "MEP elements per level:" };
+                foreach (var level in levels)
+                {
+                    int ducts = new FluentCollector(doc)
+                        .OfCategory(BuiltInCategory.OST_DuctCurves)
+                        .WhereElementIsNotElementType()
+                        .OnLevel(level.Id)
+                        .Count();
+                    int pipes = new FluentCollector(doc)
+                        .OfCategory(BuiltInCategory.OST_PipeCurves)
+                        .WhereElementIsNotElementType()
+                        .OnLevel(level.Id)
+                        .Count();
+                    if (ducts + pipes > 0)
+                        lines.Add($"  {level.Name}: {ducts} ducts, {pipes} pipes");
+                }
+                return string.Join("\n", lines);
+            }
+        }
+        ```
+
+        ### EXAMPLE 50: FluentCollector — Disconnected elements with connector analysis
+        ```csharp
+        using System;
+        using System.Linq;
+        using System.Collections.Generic;
+        using Autodesk.Revit.DB;
+        using RevitChatBot.RevitServices;
+
+        public static class DynamicAction
+        {
+            public static string Execute(Document doc)
+            {
+                var cats = new[] {
+                    BuiltInCategory.OST_DuctCurves, BuiltInCategory.OST_PipeCurves,
+                    BuiltInCategory.OST_DuctFitting, BuiltInCategory.OST_PipeFitting,
+                    BuiltInCategory.OST_MechanicalEquipment };
+
+                var disconnected = new List<string>();
+                foreach (var cat in cats)
+                {
+                    var elements = new FluentCollector(doc)
+                        .OfCategory(cat)
+                        .WhereElementIsNotElementType()
+                        .Where(e => e.HasOpenConnectors())
+                        .ToList();
+
+                    foreach (var e in elements.Take(10))
+                    {
+                        var openCount = e.GetOpenConnectors().Count;
+                        disconnected.Add($"  ID:{e.Id} {e.Category?.Name} {e.GetSize()} ({openCount} open)");
+                    }
+                }
+                if (disconnected.Count == 0) return "All MEP elements are fully connected.";
+                return $"Disconnected elements ({disconnected.Count}):\n" + string.Join("\n", disconnected);
+            }
+        }
+        ```
         """;
 }

@@ -74,7 +74,7 @@ public class TraverseMepSystemSkill : ISkill
                     pathLines.Add($"{indent}[{depth}] ID:{elem.Id} {cat} {sizeStr} sys={sysName}{arrow}");
                 }
 
-                ConnectorManager cm = GetConnectorManager(elem);
+                ConnectorManager? cm = GetConnectorManager(elem);
                 if (cm == null) continue;
 
                 foreach (Connector c in cm.Connectors)

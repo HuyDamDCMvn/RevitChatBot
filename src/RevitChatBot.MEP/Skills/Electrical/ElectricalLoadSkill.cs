@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Electrical;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.MEP.Skills.Calculation;
 
 namespace RevitChatBot.MEP.Skills.Electrical;
 
@@ -14,9 +15,11 @@ namespace RevitChatBot.MEP.Skills.Electrical;
 [SkillParameter("include_circuits", "string",
     "Include detailed circuit info (default: false)", isRequired: false,
     allowedValues: new[] { "true", "false" })]
-public class ElectricalLoadSkill : ISkill
+public class ElectricalLoadSkill : CalculationSkillBase
 {
-    public async Task<SkillResult> ExecuteAsync(
+    protected override string SkillName => "electrical_load_analysis";
+
+    public override async Task<SkillResult> ExecuteAsync(
         SkillContext context,
         Dictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
@@ -86,6 +89,29 @@ public class ElectricalLoadSkill : ISkill
             };
         });
 
-        return SkillResult.Ok("Electrical load analysis completed.", result);
+        var totalPanels = (int)((dynamic)result!).totalPanels;
+        var summary = new CalcResultSummary
+        {
+            TotalItems = totalPanels,
+            IssueCount = 0,
+            KeyMetrics = { ["totalLoadKW"] = (double)((dynamic)result!).totalSystemLoadKW }
+        };
+        var delta = ComputeDelta(context, summary);
+        SaveResultForDelta(context, summary);
+
+        var msg = "Electrical load analysis completed.";
+        if (delta is not null) msg += $"\n{delta.Summary}";
+
+        var followUps = new List<FollowUpSuggestion>();
+        if (totalPanels > 0)
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "electrical_circuit_check",
+                Reason = "Validate circuit loading and phase balance"
+            });
+
+        msg = AppendFollowUps(msg, followUps);
+        return OkPaginated(msg, result, totalPanels,
+            Math.Min(totalPanels, 30), "panels");
     }
 }

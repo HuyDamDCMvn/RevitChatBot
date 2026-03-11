@@ -1,6 +1,56 @@
 # Revit MEP ChatBot
 
-An AI-powered chatbot embedded in Autodesk Revit 2025 for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Uses **Ollama** (`qwen2.5:7b`) for local LLM inference, **RAG** for standards lookup, a **ReAct agent** for multi-step reasoning, **Roslyn dynamic code generation** for unlimited Revit API operations, **self-evolving skills** (codegen results auto-saved and promotable to reusable skills), **cross-session memory** with conversation persistence, **smart query understanding** (bilingual intent/entity extraction, adaptive prompting, semantic skill routing, few-shot examples, clarification flow), **advanced LLM intelligence** (conversation rewriting, context window optimization, smart history pruning, multi-intent decomposition, adaptive few-shot learning, dynamic glossary, skill success feedback, prompt caching, response quality validation, streaming intent detection), **autonomous self-training** (plan replay, self-evaluation, composite skill discovery, knowledge synthesis, skill gap analysis, workflow discovery), and a **React** UI rendered via WebView2.
+[![Release](https://img.shields.io/github/v/release/HuyDamDCMvn/RevitChatBot)](https://github.com/HuyDamDCMvn/RevitChatBot/releases)
+[![License](https://img.shields.io/github/license/HuyDamDCMvn/RevitChatBot)](LICENSE)
+
+An AI-powered chatbot embedded in **Autodesk Revit 2025** for MEP (Mechanical, Electrical, Plumbing) engineering tasks. Runs entirely on your local machine using **Ollama** for LLM inference — no cloud, no API keys, no data leaves your computer.
+
+**Key Features:**
+- **ReAct Agent** — Multi-step reasoning with 40+ MEP skills
+- **Bilingual** — Vietnamese and English with automatic detection
+- **Dynamic Code Generation** — Roslyn C# compiler for unlimited Revit API operations
+- **RAG Knowledge Pipeline** — Standards lookup from PDF/MD/JSON documents
+- **Self-Evolving Skills** — Learns from successful code generation and user corrections
+- **Cross-Session Memory** — Remembers context, preferences, and learned facts
+- **3D Visualization** — Highlights issues directly in Revit views
+- **Autonomous Self-Training** — Continuously improves through plan replay, self-evaluation, and knowledge synthesis
+
+---
+
+## Quick Start (One-Click Install)
+
+### Download and Install
+
+1. Download `RevitChatBot-v1.0.0.zip` from [Releases](https://github.com/HuyDamDCMvn/RevitChatBot/releases/latest)
+2. Extract the zip file
+3. Run the install script in PowerShell:
+   ```powershell
+   .\install.ps1 -SourceDir .\RevitChatBot
+   ```
+
+### Setup Ollama
+
+```bash
+# Install Ollama from https://ollama.ai
+ollama serve
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
+```
+
+### Launch
+
+1. Start **Revit 2025**
+2. Click **"MEP ChatBot"** in the **AI** ribbon tab
+3. Wait for the green connection status
+4. Start chatting!
+
+### Uninstall
+
+```powershell
+.\uninstall.ps1
+```
+
+---
 
 ## Architecture Overview
 

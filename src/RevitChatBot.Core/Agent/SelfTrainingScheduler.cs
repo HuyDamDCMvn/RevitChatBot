@@ -9,6 +9,7 @@ namespace RevitChatBot.Core.Agent;
 /// - Knowledge synthesis (from accumulated interactions)
 /// - Skill gap analysis (weekly)
 /// - Workflow discovery (using LLM)
+/// - Recipe discovery (skill+knowledge combos)
 /// - Persistence of all learning data
 /// </summary>
 public class SelfTrainingScheduler : IDisposable
@@ -19,6 +20,7 @@ public class SelfTrainingScheduler : IDisposable
     private readonly SkillGapAnalyzer? _gapAnalyzer;
     private readonly SkillDiscoveryAgent? _discoveryAgent;
     private readonly SelfLearningPersistenceManager? _persistenceManager;
+    private readonly SkillKnowledgeRecipeStore? _recipeStore;
     private readonly AgentLogger? _logger;
 
     private readonly SemaphoreSlim _runLock = new(1, 1);
@@ -30,13 +32,20 @@ public class SelfTrainingScheduler : IDisposable
     /// </summary>
     public Func<List<InteractionRecord>, CancellationToken, Task<int>>? OnSynthesizeKnowledge { get; set; }
 
+    /// <summary>
+    /// Delegate to set prioritized topics on KnowledgeSynthesizer before synthesis runs.
+    /// Wired from WebViewBridge to feed recipe frequency data into knowledge synthesis.
+    /// </summary>
+    public Action<List<string>>? OnSetSynthesisPriorities { get; set; }
+
     public SelfTrainingScheduler(
         CompositeSkillEngine? compositeEngine = null,
         InteractionRecorder? recorder = null,
         SkillGapAnalyzer? gapAnalyzer = null,
         SkillDiscoveryAgent? discoveryAgent = null,
         SelfLearningPersistenceManager? persistenceManager = null,
-        AgentLogger? logger = null)
+        AgentLogger? logger = null,
+        SkillKnowledgeRecipeStore? recipeStore = null)
     {
         _compositeEngine = compositeEngine;
         _recorder = recorder;
@@ -44,6 +53,7 @@ public class SelfTrainingScheduler : IDisposable
         _discoveryAgent = discoveryAgent;
         _persistenceManager = persistenceManager;
         _logger = logger;
+        _recipeStore = recipeStore;
     }
 
     /// <summary>
@@ -67,6 +77,7 @@ public class SelfTrainingScheduler : IDisposable
             await RunKnowledgeSynthesis(ct);
             await RunGapAnalysis(ct);
             await RunWorkflowDiscovery(ct);
+            RunRecipeAnalysis();
 
             if (_persistenceManager != null)
                 await _persistenceManager.PersistAllAsync(ct);
@@ -109,6 +120,17 @@ public class SelfTrainingScheduler : IDisposable
 
         try
         {
+            if (_recipeStore != null && OnSetSynthesisPriorities != null)
+            {
+                var frequentRecipes = _recipeStore.DiscoverFrequentRecipes(minUseCount: 2);
+                var topics = frequentRecipes
+                    .Select(r => r.Intent)
+                    .Where(t => !string.IsNullOrEmpty(t))
+                    .Distinct()
+                    .ToList();
+                OnSetSynthesisPriorities(topics);
+            }
+
             var records = _recorder.GetRecentRecords(days: 7);
             var articlesCreated = await OnSynthesizeKnowledge(records, ct);
 
@@ -155,9 +177,38 @@ public class SelfTrainingScheduler : IDisposable
             _lastWorkflowDiscovery = DateTime.UtcNow;
             var workflows = await _discoveryAgent.DiscoverWorkflows(ct);
 
+            int promoted = 0;
+            if (_compositeEngine != null)
+            {
+                foreach (var wf in workflows.Take(3))
+                {
+                    if (_compositeEngine.PromoteFromWorkflow(wf))
+                        promoted++;
+                }
+            }
+
             if (workflows.Count > 0)
                 _logger?.LogToolExecution("self_training_workflow_discovery",
-                    new Dictionary<string, object?> { ["workflows_found"] = workflows.Count },
+                    new Dictionary<string, object?>
+                    {
+                        ["workflows_found"] = workflows.Count,
+                        ["promoted_to_composite"] = promoted
+                    },
+                    true, 0);
+        }
+        catch { /* non-critical */ }
+    }
+
+    private void RunRecipeAnalysis()
+    {
+        if (_recipeStore == null) return;
+
+        try
+        {
+            var frequentRecipes = _recipeStore.DiscoverFrequentRecipes(minUseCount: 3);
+            if (frequentRecipes.Count > 0)
+                _logger?.LogToolExecution("self_training_recipe_analysis",
+                    new Dictionary<string, object?> { ["frequent_recipes"] = frequentRecipes.Count },
                     true, 0);
         }
         catch { /* non-critical */ }

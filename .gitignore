@@ -26,8 +26,8 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
-# Build outputs
-*.zip
+# Release packaging
+release/
 
 # Secrets / local config
 *.env
@@ -39,6 +39,14 @@ knowledge_index.json
 
 # Memory data (user-specific)
 memory/
+
+# Runtime data (auto-generated)
+llm_data/
+learning_cortex/
+codegen/
+calc_data/
+viz_learning/
+logs/
 
 # PDF standards (too large for git, download separately)
 # See docs/knowledge/README.md for instructions

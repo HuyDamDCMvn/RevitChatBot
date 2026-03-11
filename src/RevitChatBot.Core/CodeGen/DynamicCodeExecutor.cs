@@ -125,6 +125,7 @@ public class DynamicCodeExecutor
             using Autodesk.Revit.DB.Plumbing;
             using Autodesk.Revit.DB.Electrical;
             using Autodesk.Revit.DB.Structure;
+            using RevitChatBot.RevitServices;
 
             public static class DynamicAction
             {
@@ -142,7 +143,7 @@ public class DynamicCodeExecutor
     public static string GetCodeTemplate()
     {
         return """
-            // Template for dynamic Revit code. 
+            // Template for dynamic Revit code.
             // The Execute method receives the active Revit Document.
             // Return a string describing the result.
             
@@ -154,13 +155,17 @@ public class DynamicCodeExecutor
             using Autodesk.Revit.DB.Plumbing;
             using Autodesk.Revit.DB.Electrical;
             using Autodesk.Revit.DB.Structure;
+            using RevitChatBot.RevitServices;
             
             public static class DynamicAction
             {
                 public static string Execute(Document doc)
                 {
-                    // Your code here.
-                    // Use FilteredElementCollector to query elements.
+                    // Use FluentCollector for optimized queries:
+                    //   new FluentCollector(doc).OfCategory(...).OnLevel(...).ToList()
+                    // Use ElementExtensions for clean parameter access:
+                    //   element.GetSystemName(), element.GetSize(), element.GetLevelName(doc)
+                    // Use FilteredElementCollector for standard queries.
                     // Use Transaction for modifications.
                     // Return a descriptive result string.
                     

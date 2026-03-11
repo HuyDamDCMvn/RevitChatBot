@@ -95,6 +95,39 @@ public class CompositeSkillEngine
         return string.Join("\n", lines);
     }
 
+    /// <summary>
+    /// Promote a workflow template (from SkillDiscoveryAgent) to a composite skill.
+    /// Only registers if all skills in the sequence exist and the name isn't taken.
+    /// </summary>
+    public bool PromoteFromWorkflow(WorkflowTemplate workflow)
+    {
+        if (string.IsNullOrEmpty(workflow.Name) || workflow.SkillSequence.Count < 2)
+            return false;
+
+        var skillName = $"composite_{workflow.Name}";
+        if (_skillRegistry.GetSkill(skillName) != null)
+            return false;
+
+        var chain = workflow.SkillSequence
+            .Select(name => new StoredSkillCall { SkillName = name, Parameters = new() })
+            .ToList();
+
+        if (chain.Any(s => _skillRegistry.GetSkill(s.SkillName) == null))
+            return false;
+
+        var skill = new CompositeSkill(chain, _executor);
+        var descriptor = new SkillDescriptor
+        {
+            Name = skillName,
+            Description = (workflow.Description ?? $"Runs {string.Join(", ", workflow.SkillSequence)}")
+                + " [Composite — LLM-discovered]",
+            Parameters = MergeParameters(chain)
+        };
+
+        _skillRegistry.RegisterDynamic(skillName, skill, descriptor);
+        return true;
+    }
+
     private static string GenerateName(List<StoredSkillCall> chain)
     {
         var parts = chain.Select(s =>

@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.MEP.Skills.Calculation;
 
 namespace RevitChatBot.MEP.Skills.Plumbing;
 
@@ -15,9 +16,11 @@ namespace RevitChatBot.MEP.Skills.Plumbing;
     allowedValues: new[] { "sanitary", "storm", "all" })]
 [SkillParameter("min_slope", "number",
     "Minimum required slope in inch/ft (default: 0.125 = 1/8 inch per foot)", isRequired: false)]
-public class DrainageCalculationSkill : ISkill
+public class DrainageCalculationSkill : CalculationSkillBase
 {
-    public async Task<SkillResult> ExecuteAsync(
+    protected override string SkillName => "drainage_analysis";
+
+    public override async Task<SkillResult> ExecuteAsync(
         SkillContext context,
         Dictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
@@ -25,8 +28,8 @@ public class DrainageCalculationSkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
-        var sysType = parameters.GetValueOrDefault("system_type")?.ToString() ?? "all";
-        var minSlope = ParseDouble(parameters.GetValueOrDefault("min_slope"), 0.125);
+        var sysType = GetParamString(parameters, context, "system_type", "all");
+        var minSlope = GetParamDouble(parameters, context, "min_slope", 0.125);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -90,14 +93,26 @@ public class DrainageCalculationSkill : ISkill
             };
         });
 
-        return SkillResult.Ok("Drainage analysis completed.", result);
-    }
+        var totalPipes = (int)((dynamic)result!).totalDrainPipes;
+        var issueCount = (int)((dynamic)result!).slopeIssueCount;
+        var calcSummary = new CalcResultSummary { TotalItems = totalPipes, IssueCount = issueCount };
+        var delta = ComputeDelta(context, calcSummary);
+        SaveResultForDelta(context, calcSummary);
 
-    private static double ParseDouble(object? value, double fallback)
-    {
-        if (value is double d) return d;
-        if (value is int i) return i;
-        if (value is string s && double.TryParse(s, out var parsed)) return parsed;
-        return fallback;
+        var msg = "Drainage analysis completed.";
+        if (delta is not null) msg += $"\n{delta.Summary}";
+
+        var followUps = new List<FollowUpSuggestion>();
+        if (issueCount > 0)
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "pipe_sizing_analysis",
+                Reason = $"{issueCount} slope issue(s) — review pipe sizing",
+                PrefilledParams = { ["pipe_type"] = "sanitary" }
+            });
+
+        msg = AppendFollowUps(msg, followUps);
+        return OkPaginated(msg, result, totalPipes,
+            Math.Min(totalPipes, 20), "drain pipes");
     }
 }

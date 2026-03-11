@@ -1,4 +1,5 @@
 using RevitChatBot.Core.Agent;
+using RevitChatBot.Core.CodeGen;
 using RevitChatBot.Core.LLM;
 using RevitChatBot.Core.Memory;
 
@@ -40,7 +41,9 @@ public class ProactiveSuggestionEngine
         List<SkillCorrelation> correlations,
         List<InteractionRecord> recentRecords,
         ImprovementStore? improvementStore,
-        SessionAnalytics? analytics)
+        SessionAnalytics? analytics,
+        AdaptiveFewShotLearning? fewShot = null,
+        CodePatternLearning? codePatterns = null)
     {
         var suggestions = new List<ProactiveSuggestion>();
 
@@ -52,6 +55,8 @@ public class ProactiveSuggestionEngine
         GenerateTrustCalibration(suggestions, userProfile);
         GenerateExpertiseAdaptation(suggestions, userProfile);
         GenerateImprovementReminders(suggestions, improvementStore);
+        GenerateFewShotInsights(suggestions, fewShot);
+        GenerateCodePatternInsights(suggestions, codePatterns);
 
         return suggestions
             .OrderByDescending(s => s.Confidence)
@@ -241,7 +246,6 @@ public class ProactiveSuggestionEngine
     {
         if (store is null || store.Count == 0) return;
 
-        // Surface the most impactful improvements as gentle reminders
         var hint = store.GetImprovementHints("*", maxHints: 2);
         if (string.IsNullOrWhiteSpace(hint)) return;
 
@@ -252,6 +256,40 @@ public class ProactiveSuggestionEngine
             Confidence = 0.6,
             SourceModule = "ImprovementStore"
         });
+    }
+
+    private static void GenerateFewShotInsights(
+        List<ProactiveSuggestion> suggestions, AdaptiveFewShotLearning? fewShot)
+    {
+        if (fewShot is null || fewShot.Count < 5) return;
+
+        suggestions.Add(new ProactiveSuggestion
+        {
+            Type = SuggestionType.WorkflowHint,
+            Suggestion = $"Adaptive learning has {fewShot.Count} learned examples from successful skill calls. " +
+                "These are automatically prioritized in few-shot prompts for better accuracy.",
+            Confidence = 0.5,
+            SourceModule = "AdaptiveFewShotLearning"
+        });
+    }
+
+    private static void GenerateCodePatternInsights(
+        List<ProactiveSuggestion> suggestions, CodePatternLearning? codePatterns)
+    {
+        if (codePatterns is null) return;
+
+        var errorWarnings = codePatterns.GetFrequentErrorWarnings();
+        if (!string.IsNullOrWhiteSpace(errorWarnings))
+        {
+            suggestions.Add(new ProactiveSuggestion
+            {
+                Type = SuggestionType.OptimizationTip,
+                Suggestion = "Codegen has recurring error patterns. " +
+                    "Consider reviewing error-prone patterns to improve code generation success rate.",
+                Confidence = 0.65,
+                SourceModule = "CodePatternLearning"
+            });
+        }
     }
 }
 

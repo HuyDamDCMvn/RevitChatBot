@@ -6,58 +6,42 @@ namespace RevitChatBot.RevitServices;
 
 public class RevitMEPService : IRevitMEPService
 {
+    public FluentCollector Collect(Document doc) => new(doc);
+
     public List<Element> GetMEPSystems(Document doc)
     {
-        var mechanical = new FilteredElementCollector(doc)
-            .OfClass(typeof(MechanicalSystem))
-            .ToList();
-
-        var piping = new FilteredElementCollector(doc)
-            .OfClass(typeof(PipingSystem))
-            .ToList();
-
+        var mechanical = new FluentCollector(doc).OfClass<MechanicalSystem>().ToList();
+        var piping = new FluentCollector(doc).OfClass<PipingSystem>().ToList();
         return mechanical.Concat(piping).ToList();
     }
 
     public List<Element> GetDucts(Document doc, string? systemName = null)
     {
-        var collector = new FilteredElementCollector(doc)
-            .OfClass(typeof(Duct))
+        var collector = new FluentCollector(doc)
+            .OfClass<Duct>()
             .WhereElementIsNotElementType();
 
         if (systemName is not null)
-        {
-            return collector
-                .Cast<Duct>()
-                .Where(d => d.MEPSystem?.Name?.Contains(systemName, StringComparison.OrdinalIgnoreCase) == true)
-                .Cast<Element>()
-                .ToList();
-        }
+            collector.InSystem(systemName);
 
         return collector.ToList();
     }
 
     public List<Element> GetPipes(Document doc, string? systemName = null)
     {
-        var collector = new FilteredElementCollector(doc)
-            .OfClass(typeof(Pipe))
+        var collector = new FluentCollector(doc)
+            .OfClass<Pipe>()
             .WhereElementIsNotElementType();
 
         if (systemName is not null)
-        {
-            return collector
-                .Cast<Pipe>()
-                .Where(p => p.MEPSystem?.Name?.Contains(systemName, StringComparison.OrdinalIgnoreCase) == true)
-                .Cast<Element>()
-                .ToList();
-        }
+            collector.InSystem(systemName);
 
         return collector.ToList();
     }
 
     public List<Element> GetMEPEquipment(Document doc)
     {
-        return new FilteredElementCollector(doc)
+        return new FluentCollector(doc)
             .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
             .WhereElementIsNotElementType()
             .ToList();
@@ -65,7 +49,7 @@ public class RevitMEPService : IRevitMEPService
 
     public List<Element> GetFittings(Document doc, BuiltInCategory category)
     {
-        return new FilteredElementCollector(doc)
+        return new FluentCollector(doc)
             .OfCategory(category)
             .WhereElementIsNotElementType()
             .ToList();

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRevitBridge } from '../hooks/useRevitBridge';
+import { AnnotationToolbar } from './AnnotationToolbar';
 import { InputBar } from './InputBar';
 import { MessageBubble } from './MessageBubble';
 import { SettingsPanel } from './SettingsPanel';
@@ -97,6 +98,9 @@ export function ChatWindow() {
           </div>
         )}
       </div>
+
+      {/* Annotation quick actions */}
+      <AnnotationToolbar onSend={sendMessage} disabled={isLoading} />
 
       {/* Input */}
       <InputBar onSend={sendMessage} disabled={isLoading} />

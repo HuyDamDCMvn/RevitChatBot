@@ -66,7 +66,13 @@ public class ChatSessionV2
         SelfLearningPersistenceManager? persistenceManager = null,
         SelfTrainingScheduler? selfTrainingScheduler = null,
         LearningCortex? learningCortex = null,
-        FailureRecoveryLearner? failureRecovery = null)
+        FailureRecoveryLearner? failureRecovery = null,
+        KnowledgeCodeTemplateStore? codeTemplateStore = null,
+        SkillKnowledgeIndex? skillKnowledgeIndex = null,
+        DynamicCodeExamplesLibrary? dynamicExamplesLibrary = null,
+        CodeGenKnowledgeEnricher? codeGenKnowledgeEnricher = null,
+        SkillKnowledgeRecipeStore? recipeStore = null,
+        ContextUsageTracker? contextUsageTracker = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
@@ -84,7 +90,10 @@ public class ChatSessionV2
             agentLogger,
             planReplayStore, interactionRecorder, selfEvaluator,
             improvementStore, compositeEngine, persistenceManager,
-            learningCortex, failureRecovery);
+            learningCortex, failureRecovery,
+            codeTemplateStore, skillKnowledgeIndex, dynamicExamplesLibrary,
+            codeGenKnowledgeEnricher, recipeStore,
+            contextUsageTracker);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }

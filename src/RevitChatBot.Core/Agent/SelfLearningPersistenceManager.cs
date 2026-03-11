@@ -22,6 +22,7 @@ public class SelfLearningPersistenceManager
     private readonly ImprovementStore? _improvementStore;
     private readonly LearningCortex? _learningCortex;
     private readonly FailureRecoveryLearner? _failureRecovery;
+    private readonly ContextUsageTracker? _contextUsageTracker;
 
     private int _changesSinceLastPersist;
     private const int PersistThreshold = 3;
@@ -38,7 +39,8 @@ public class SelfLearningPersistenceManager
         InteractionRecorder? interactionRecorder = null,
         ImprovementStore? improvementStore = null,
         LearningCortex? learningCortex = null,
-        FailureRecoveryLearner? failureRecovery = null)
+        FailureRecoveryLearner? failureRecovery = null,
+        ContextUsageTracker? contextUsageTracker = null)
     {
         _patternLearning = patternLearning;
         _dynamicSkills = dynamicSkills;
@@ -51,6 +53,7 @@ public class SelfLearningPersistenceManager
         _improvementStore = improvementStore;
         _learningCortex = learningCortex;
         _failureRecovery = failureRecovery;
+        _contextUsageTracker = contextUsageTracker;
     }
 
     /// <summary>
@@ -85,6 +88,7 @@ public class SelfLearningPersistenceManager
             if (_improvementStore != null) tasks.Add(_improvementStore.SaveAsync(ct));
             if (_learningCortex != null) tasks.Add(_learningCortex.SaveAsync(ct));
             if (_failureRecovery != null) tasks.Add(_failureRecovery.SaveAsync(ct));
+            if (_contextUsageTracker != null) tasks.Add(_contextUsageTracker.SaveAsync(ct));
 
             await Task.WhenAll(tasks);
         }
@@ -112,6 +116,7 @@ public class SelfLearningPersistenceManager
         if (_improvementStore != null) tasks.Add(_improvementStore.LoadAsync(ct));
         if (_learningCortex != null) tasks.Add(_learningCortex.LoadAsync(ct));
         if (_failureRecovery != null) tasks.Add(_failureRecovery.LoadAsync(ct));
+        if (_contextUsageTracker != null) tasks.Add(_contextUsageTracker.LoadAsync(ct));
 
         await Task.WhenAll(tasks);
     }

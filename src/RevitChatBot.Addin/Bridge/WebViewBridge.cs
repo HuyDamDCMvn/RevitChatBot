@@ -12,11 +12,13 @@ using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.LLM;
 using RevitChatBot.Core.Memory;
 using RevitChatBot.Core.Models;
+using MemoryContextProvider = RevitChatBot.Core.Memory.MemoryContextProvider;
 using RevitChatBot.Core.Skills;
 using RevitChatBot.Knowledge.Embeddings;
 using RevitChatBot.Knowledge.Search;
 using RevitChatBot.Knowledge.Synthesis;
 using RevitChatBot.Knowledge.VectorStore;
+using RevitChatBot.MEP.Skills.Calculation;
 using RevitChatBot.Visualization;
 using RevitChatBot.Visualization.Context;
 using RevitChatBot.Visualization.Learning;
@@ -53,7 +55,9 @@ public class WebViewBridge : IDisposable
     private MultiIntentDecomposer? _intentDecomposer;
     private AdaptiveFewShotLearning? _fewShotLearning;
     private DynamicGlossary? _dynamicGlossary;
+#pragma warning disable CS0649
     private SkillSuccessFeedback? _skillFeedback;
+#pragma warning restore CS0649
     private PromptCache? _promptCache;
 
     private PlanReplayStore? _planReplayStore;
@@ -69,6 +73,14 @@ public class WebViewBridge : IDisposable
     private VisualizationManager? _vizManager;
     private VisualFeedbackLearner? _vizLearner;
     private VisualWorkflowComposer? _vizComposer;
+    private CalculationPreferenceStore? _calcPreferenceStore;
+
+    private KnowledgeCodeTemplateStore? _codeTemplateStore;
+    private SkillKnowledgeIndex? _skillKnowledgeIndex;
+    private DynamicCodeExamplesLibrary? _dynamicExamplesLibrary;
+    private CodeGenKnowledgeEnricher? _codeGenKnowledgeEnricher;
+    private SkillKnowledgeRecipeStore? _recipeStore;
+    private ContextUsageTracker? _contextUsageTracker;
 
     public WebViewBridge(WebView2 webView, RevitEventHandler eventHandler, BridgeInitData initData)
     {
@@ -110,6 +122,7 @@ public class WebViewBridge : IDisposable
         InitializeLLMIntelligence();
         InitializeLearningCortex();
         RegisterVisualization(skillRegistry, contextManager);
+        InitializeCalculationStore(skillContext);
 
         if (_vizManager is not null)
             skillContext.VisualizationManager = _vizManager;
@@ -117,7 +130,11 @@ public class WebViewBridge : IDisposable
         skillContext.SendToUI = (type, content, data) =>
             SendToUI(new BridgeMessage { Type = type, Content = content, Data = data });
 
+        _skillKnowledgeIndex?.IndexFromRegistry(skillRegistry);
+
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
+        if (_memoryManager != null)
+            contextManager.Register(new MemoryContextProvider(_memoryManager));
         InitializeSelfTraining(skillRegistry, skillExecutor);
 
         _chatSession = new ChatSessionV2(
@@ -145,7 +162,13 @@ public class WebViewBridge : IDisposable
             persistenceManager: _persistenceManager,
             selfTrainingScheduler: _selfTrainingScheduler,
             learningCortex: _learningCortex,
-            failureRecovery: _failureRecovery);
+            failureRecovery: _failureRecovery,
+            codeTemplateStore: _codeTemplateStore,
+            skillKnowledgeIndex: _skillKnowledgeIndex,
+            dynamicExamplesLibrary: _dynamicExamplesLibrary,
+            codeGenKnowledgeEnricher: _codeGenKnowledgeEnricher,
+            recipeStore: _recipeStore,
+            contextUsageTracker: _contextUsageTracker);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -256,6 +279,7 @@ public class WebViewBridge : IDisposable
         _ = InitializeLLMModulesAsync();
         _ = InitializeSelfTrainingModulesAsync();
         _ = InitializeLearningCortexAsync();
+        _ = InitializeCalcStoreAsync();
     }
 
     private static void RegisterMEPComponents(
@@ -324,6 +348,8 @@ public class WebViewBridge : IDisposable
                 compiler.AddReferenceFromType(typeof(Autodesk.Revit.DB.Document));
             }
 
+            compiler.AddReferenceFromType(typeof(RevitChatBot.RevitServices.FluentCollector));
+
             _codeExecutor = new DynamicCodeExecutor(compiler);
 
             var addinDir = Path.GetDirectoryName(
@@ -335,6 +361,15 @@ public class WebViewBridge : IDisposable
             _dynamicSkillRegistry = new DynamicSkillRegistry(
                 Path.Combine(codegenDir, "dynamic_skills.json"), _codeExecutor, registry);
             _patternLearning = new CodePatternLearning(Path.Combine(codegenDir, "patterns.json"));
+
+            _codeTemplateStore = new KnowledgeCodeTemplateStore();
+            _dynamicExamplesLibrary = new DynamicCodeExamplesLibrary(
+                Path.Combine(codegenDir, "learned_examples.json"));
+            _codeGenKnowledgeEnricher = new CodeGenKnowledgeEnricher();
+            _recipeStore = new SkillKnowledgeRecipeStore(
+                Path.Combine(codegenDir, "recipes.json"));
+
+            _skillKnowledgeIndex = new SkillKnowledgeIndex();
 
             var skill = new DynamicCodeSkill(_codeExecutor, _codeGenLibrary, _dynamicSkillRegistry, _patternLearning);
             registry.Register(skill);
@@ -440,6 +475,7 @@ public class WebViewBridge : IDisposable
 
             _learningCortex = new LearningCortex(cortexDir);
             _failureRecovery = new FailureRecoveryLearner(cortexDir);
+            _contextUsageTracker = new ContextUsageTracker(cortexDir);
         }
         catch { }
     }
@@ -463,6 +499,22 @@ public class WebViewBridge : IDisposable
 
             _vizLearner = new VisualFeedbackLearner(vizDir);
             _vizComposer = new VisualWorkflowComposer(_vizLearner, vizDir);
+        }
+        catch { }
+    }
+
+    private void InitializeCalculationStore(SkillContext skillContext)
+    {
+        try
+        {
+            var addinDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+            var calcDataDir = Path.Combine(addinDir, "calc_data");
+            Directory.CreateDirectory(calcDataDir);
+
+            _calcPreferenceStore = new CalculationPreferenceStore(
+                Path.Combine(calcDataDir, "calc_preferences.json"));
+            skillContext.Extra["calc_preference_store"] = _calcPreferenceStore;
         }
         catch { }
     }
@@ -514,9 +566,20 @@ public class WebViewBridge : IDisposable
             var tasks = new List<Task>();
             if (_learningCortex is not null) tasks.Add(_learningCortex.LoadAsync());
             if (_failureRecovery is not null) tasks.Add(_failureRecovery.LoadAsync());
+            if (_contextUsageTracker is not null) tasks.Add(_contextUsageTracker.LoadAsync());
             if (_vizLearner is not null) tasks.Add(_vizLearner.LoadAsync());
             if (_vizComposer is not null) tasks.Add(_vizComposer.LoadAsync());
             await Task.WhenAll(tasks);
+        }
+        catch { }
+    }
+
+    private async Task InitializeCalcStoreAsync()
+    {
+        try
+        {
+            if (_calcPreferenceStore is not null)
+                await _calcPreferenceStore.LoadAsync();
         }
         catch { }
     }
@@ -540,7 +603,8 @@ public class WebViewBridge : IDisposable
                 interactionRecorder: _interactionRecorder,
                 improvementStore: _improvementStore,
                 learningCortex: _learningCortex,
-                failureRecovery: _failureRecovery);
+                failureRecovery: _failureRecovery,
+                contextUsageTracker: _contextUsageTracker);
 
             var gapAnalyzer = _interactionRecorder != null
                 ? new SkillGapAnalyzer(_ollamaService!, skillRegistry, _interactionRecorder)
@@ -556,7 +620,8 @@ public class WebViewBridge : IDisposable
                 gapAnalyzer: gapAnalyzer,
                 discoveryAgent: discoveryAgent,
                 persistenceManager: _persistenceManager,
-                logger: _agentLogger);
+                logger: _agentLogger,
+                recipeStore: _recipeStore);
 
             if (_knowledgeManager != null && _ollamaService != null)
             {
@@ -568,6 +633,9 @@ public class WebViewBridge : IDisposable
 
                 _selfTrainingScheduler.OnSynthesizeKnowledge = async (records, ct) =>
                     await _knowledgeSynthesizer.SynthesizeFromInteractions(records, ct);
+
+                _selfTrainingScheduler.OnSetSynthesisPriorities = topics =>
+                    _knowledgeSynthesizer.PrioritizedTopics = topics;
             }
         }
         catch { }
@@ -662,7 +730,10 @@ public class WebViewBridge : IDisposable
     {
         try
         {
-            var memory = new MemoryManager(ollama, contextManager);
+            var addinDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+            var memoryDir = Path.Combine(addinDir, "memory_data");
+            var memory = new MemoryManager(memoryDir, ollama);
             return memory;
         }
         catch
@@ -705,7 +776,21 @@ public class WebViewBridge : IDisposable
             if (_codeGenLibrary != null) tasks.Add(_codeGenLibrary.LoadAsync());
             if (_dynamicSkillRegistry != null) tasks.Add(_dynamicSkillRegistry.LoadAndRegisterAsync());
             if (_patternLearning != null) tasks.Add(_patternLearning.LoadAsync());
+            if (_dynamicExamplesLibrary != null) tasks.Add(_dynamicExamplesLibrary.LoadAsync());
+            if (_recipeStore != null) tasks.Add(_recipeStore.LoadAsync());
             await Task.WhenAll(tasks);
+
+            if (_codeGenKnowledgeEnricher != null && _knowledgeManager != null)
+            {
+                _codeGenKnowledgeEnricher.SearchKnowledge = async (query, topK, ct) =>
+                {
+                    var results = await _knowledgeManager.SearchAsync(query, topK, ct);
+                    return results.Select(r => (
+                        Content: r.Entry.Text,
+                        Source: r.Entry.Metadata.GetValueOrDefault("source", "unknown")
+                    )).ToList();
+                };
+            }
         }
         catch { }
     }
@@ -1065,7 +1150,8 @@ public class WebViewBridge : IDisposable
             {
                 saves = Task.WhenAll(
                     _chatSession?.PersistMemoryAsync() ?? Task.CompletedTask,
-                    _persistenceManager.PersistAllAsync());
+                    _persistenceManager.PersistAllAsync(),
+                    _calcPreferenceStore?.SaveAsync() ?? Task.CompletedTask);
             }
             else
             {
@@ -1075,7 +1161,8 @@ public class WebViewBridge : IDisposable
                     _dynamicSkillRegistry?.SaveAsync() ?? Task.CompletedTask,
                     _patternLearning?.SaveAsync() ?? Task.CompletedTask,
                     _fewShotLearning?.SaveAsync() ?? Task.CompletedTask,
-                    _dynamicGlossary?.SaveAsync() ?? Task.CompletedTask);
+                    _dynamicGlossary?.SaveAsync() ?? Task.CompletedTask,
+                    _calcPreferenceStore?.SaveAsync() ?? Task.CompletedTask);
             }
 
             await Task.WhenAny(saves, timeout);

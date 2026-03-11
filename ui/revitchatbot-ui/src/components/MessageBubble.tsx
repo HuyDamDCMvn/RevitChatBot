@@ -1,4 +1,5 @@
 import ReactMarkdown, { Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ChatMessage } from '../types/messages';
 import { MermaidBlock } from './MermaidBlock';
 import { ChartBlock } from './ChartBlock';
@@ -28,6 +29,31 @@ const markdownComponents: Components = {
         {children}
       </code>
     );
+  },
+  table({ children }) {
+    return (
+      <div className="overflow-x-auto my-2 rounded-lg border border-gray-200">
+        <table className="min-w-full text-xs border-collapse">{children}</table>
+      </div>
+    );
+  },
+  thead({ children }) {
+    return <thead className="bg-gray-200/70">{children}</thead>;
+  },
+  th({ children }) {
+    return (
+      <th className="border-b border-gray-300 px-3 py-1.5 text-left font-semibold text-gray-700 whitespace-nowrap">
+        {children}
+      </th>
+    );
+  },
+  td({ children }) {
+    return (
+      <td className="border-b border-gray-100 px-3 py-1.5 text-gray-600">{children}</td>
+    );
+  },
+  tr({ children }) {
+    return <tr className="even:bg-gray-50 hover:bg-revit-50/50 transition-colors">{children}</tr>;
   },
 };
 
@@ -141,7 +167,7 @@ export function MessageBubble({ message }: Props) {
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="prose prose-sm max-w-none prose-p:my-1 prose-pre:bg-gray-200 prose-pre:text-gray-800 prose-code:text-revit-700">
-            <ReactMarkdown components={markdownComponents}>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown>
             {message.streaming && (
               <span className="inline-block w-2 h-4 ml-0.5 -mb-0.5 bg-revit-500 animate-pulse rounded-sm" />
             )}

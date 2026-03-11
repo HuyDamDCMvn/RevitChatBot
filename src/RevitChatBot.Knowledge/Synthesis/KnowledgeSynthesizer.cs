@@ -27,8 +27,15 @@ public class KnowledgeSynthesizer
     }
 
     /// <summary>
+    /// Frequent recipe topics from SkillKnowledgeRecipeStore.
+    /// Set by the training scheduler to prioritize synthesis for high-demand topics.
+    /// </summary>
+    public List<string> PrioritizedTopics { get; set; } = [];
+
+    /// <summary>
     /// Synthesize knowledge from recent interactions. Groups by topic,
     /// generates summary articles, and indexes them for RAG retrieval.
+    /// Prioritizes topics that have frequent recipes (high user demand).
     /// </summary>
     public async Task<int> SynthesizeFromInteractions(
         List<InteractionRecord> recentInteractions,
@@ -38,6 +45,15 @@ public class KnowledgeSynthesizer
 
         var clusters = ClusterByTopic(recentInteractions);
         int articlesCreated = 0;
+
+        if (PrioritizedTopics.Count > 0)
+        {
+            clusters = clusters
+                .OrderByDescending(kv => PrioritizedTopics
+                    .Any(pt => kv.Key.Contains(pt, StringComparison.OrdinalIgnoreCase)) ? 1 : 0)
+                .ThenByDescending(kv => kv.Value.Count)
+                .ToDictionary(kv => kv.Key, kv => kv.Value);
+        }
 
         foreach (var (topic, interactions) in clusters)
         {

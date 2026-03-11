@@ -37,6 +37,7 @@ public class LearningCortex
     private readonly UserBehaviorTracker _userTracker;
     private readonly CrossSkillCorrelator _correlator;
     private readonly ProactiveSuggestionEngine _suggestionEngine;
+    private readonly AnnotationTemplateLearner _annotationLearner;
 
     private CortexSnapshot? _latestSnapshot;
     private DateTime _lastAnalysisUtc;
@@ -51,11 +52,13 @@ public class LearningCortex
         _userTracker = new UserBehaviorTracker(dataDir);
         _correlator = new CrossSkillCorrelator();
         _suggestionEngine = new ProactiveSuggestionEngine();
+        _annotationLearner = new AnnotationTemplateLearner(dataDir);
     }
 
     public ProjectProfiler ProjectProfiler => _projectProfiler;
     public UserBehaviorTracker UserTracker => _userTracker;
     public CrossSkillCorrelator SkillCorrelator => _correlator;
+    public AnnotationTemplateLearner AnnotationLearner => _annotationLearner;
 
     /// <summary>
     /// Feed a completed interaction to all sub-analyzers.
@@ -91,7 +94,33 @@ public class LearningCortex
 
         if (analytics is not null)
             _correlator.UpdatePerformanceStats(analytics);
+
+        var annotationSkills = skillsUsed
+            .Where(s => AnnotationSkillNames.Contains(s))
+            .ToList();
+        if (annotationSkills.Count > 0)
+        {
+            foreach (var skillName in annotationSkills)
+            {
+                _annotationLearner.RecordAnnotation(new AnnotationRecord
+                {
+                    SkillName = skillName,
+                    Category = analysis?.Category ?? "unknown",
+                    ViewType = null,
+                    ElementsProcessed = 0
+                });
+            }
+        }
     }
+
+    private static readonly HashSet<string> AnnotationSkillNames =
+    [
+        "place_tags", "arrange_tags", "auto_dimension", "batch_annotate",
+        "smart_annotate", "check_annotation_quality", "preview_annotation",
+        "group_tags", "tag_linked_elements", "arrange_dimensions",
+        "tag_section_callouts", "auto_keynote", "arrange_viewports",
+        "fill_title_block", "align_elements", "distribute_elements"
+    ];
 
     /// <summary>
     /// Run a full cross-module analysis cycle. Call during idle time
@@ -121,7 +150,9 @@ public class LearningCortex
                 _correlator.GetTopCorrelations(20),
                 recorder?.GetRecentRecords(7) ?? [],
                 improvementStore,
-                analytics)
+                analytics,
+                fewShot,
+                codePatterns)
         };
 
         _latestSnapshot = snapshot;
@@ -184,6 +215,11 @@ public class LearningCortex
             sections.Add((corrBlock, 70));
         }
 
+        // Priority 5: Annotation preferences (from repeated annotation operations)
+        var annotationContext = _annotationLearner.BuildAnnotationContext(400);
+        if (!string.IsNullOrWhiteSpace(annotationContext))
+            sections.Add((annotationContext, 60));
+
         // Assemble within token budget (rough: 1 token ≈ 4 chars)
         var result = new List<string>();
         int usedChars = 0;
@@ -203,14 +239,16 @@ public class LearningCortex
     {
         await Task.WhenAll(
             _projectProfiler.SaveAsync(ct),
-            _userTracker.SaveAsync(ct));
+            _userTracker.SaveAsync(ct),
+            _annotationLearner.SaveAsync(ct));
     }
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
         await Task.WhenAll(
             _projectProfiler.LoadAsync(ct),
-            _userTracker.LoadAsync(ct));
+            _userTracker.LoadAsync(ct),
+            _annotationLearner.LoadAsync(ct));
     }
 }
 

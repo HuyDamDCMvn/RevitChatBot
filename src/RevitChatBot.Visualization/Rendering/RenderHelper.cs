@@ -118,6 +118,65 @@ public static class RenderHelper
         return tessellated.ToList();
     }
 
+    /// <summary>
+    /// Create a small solid sphere for marker rendering (sprinkler heads, fittings).
+    /// Uses revolved half-circle profile.
+    /// </summary>
+    public static Solid? CreateSmallSphere(XYZ center, double radiusFeet)
+    {
+        try
+        {
+            var top = center + radiusFeet * XYZ.BasisZ;
+            var bottom = center - radiusFeet * XYZ.BasisZ;
+            var right = center + radiusFeet * XYZ.BasisX;
+            var left = center - radiusFeet * XYZ.BasisX;
+
+            var loop = new CurveLoop();
+            loop.Append(Arc.Create(top, bottom, right));
+            loop.Append(Arc.Create(bottom, top, left));
+
+            var frame = new Frame(center, XYZ.BasisX, XYZ.BasisY, XYZ.BasisZ);
+            return GeometryCreationUtilities.CreateRevolvedGeometry(
+                frame, [loop], 0, 2 * Math.PI);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Create a circle curve for coverage area visualization.
+    /// </summary>
+    public static Curve? CreateCircle(XYZ center, double radiusFeet, XYZ? normal = null)
+    {
+        try
+        {
+            var n = normal ?? XYZ.BasisZ;
+            var xDir = n.IsAlmostEqualTo(XYZ.BasisZ)
+                ? XYZ.BasisX
+                : n.CrossProduct(XYZ.BasisZ).Normalize();
+            var yDir = n.CrossProduct(xDir).Normalize();
+            return Arc.Create(center, radiusFeet, 0, 2 * Math.PI, xDir, yDir);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Create a small wireframe box for fitting marker visualization.
+    /// </summary>
+    public static BoundingBoxXYZ CreateMarkerBox(XYZ center, double halfSizeFeet)
+    {
+        return new BoundingBoxXYZ
+        {
+            Min = new XYZ(center.X - halfSizeFeet, center.Y - halfSizeFeet, center.Z - halfSizeFeet),
+            Max = new XYZ(center.X + halfSizeFeet, center.Y + halfSizeFeet, center.Z + halfSizeFeet)
+        };
+    }
+
     public static List<(XYZ Start, XYZ End)> GetBoundingBoxEdges(BoundingBoxXYZ bbox)
     {
         var min = bbox.Min;

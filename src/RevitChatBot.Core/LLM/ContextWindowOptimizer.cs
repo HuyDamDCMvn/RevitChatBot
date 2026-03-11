@@ -11,6 +11,7 @@ namespace RevitChatBot.Core.LLM;
 public class ContextWindowOptimizer
 {
     private int _maxTokens;
+    private Dictionary<string, double> _learnedPriorityMultipliers = new();
 
     private const int TokensPerChar = 4;
     private const int ReservedForResponse = 1024;
@@ -30,6 +31,15 @@ public class ContextWindowOptimizer
     {
         if (maxContextTokens > 0)
             _maxTokens = maxContextTokens;
+    }
+
+    /// <summary>
+    /// Apply learned priority multipliers from ContextUsageTracker.
+    /// Keys with high reference rates get boosted; rarely-used keys get deprioritized.
+    /// </summary>
+    public void UpdateLearnedPriorities(Dictionary<string, double> multipliers)
+    {
+        _learnedPriorityMultipliers = multipliers ?? new();
     }
 
     public static int EstimateTokens(string text) =>
@@ -72,7 +82,12 @@ public class ContextWindowOptimizer
         if (available <= 0) available = 500;
 
         var prioritized = context.Entries
-            .Select(e => (key: e.Key, value: e.Value, priority: GetContextPriority(e.Key, intent), tokens: EstimateTokens(e.Value)))
+            .Select(e =>
+            {
+                var basePriority = GetContextPriority(e.Key, intent);
+                var multiplier = _learnedPriorityMultipliers.GetValueOrDefault(e.Key, 1.0);
+                return (key: e.Key, value: e.Value, priority: (int)(basePriority * multiplier), tokens: EstimateTokens(e.Value));
+            })
             .OrderByDescending(x => x.priority)
             .ToList();
 

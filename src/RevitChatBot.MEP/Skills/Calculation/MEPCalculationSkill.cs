@@ -15,9 +15,11 @@ namespace RevitChatBot.MEP.Skills.Calculation;
 [SkillParameter("system_name", "string",
     "Optional system name to filter",
     isRequired: false)]
-public class MEPCalculationSkill : ISkill
+public class MEPCalculationSkill : CalculationSkillBase
 {
-    public async Task<SkillResult> ExecuteAsync(
+    protected override string SkillName => "mep_calculation";
+
+    public override async Task<SkillResult> ExecuteAsync(
         SkillContext context,
         Dictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
@@ -25,7 +27,7 @@ public class MEPCalculationSkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
-        var calcType = parameters.GetValueOrDefault("calculation_type")?.ToString() ?? "duct_summary";
+        var calcType = GetParamString(parameters, context, "calculation_type", "duct_summary");
         var systemName = parameters.GetValueOrDefault("system_name")?.ToString();
 
         var result = await context.RevitApiInvoker(doc =>
@@ -41,7 +43,43 @@ public class MEPCalculationSkill : ISkill
             };
         });
 
-        return SkillResult.Ok($"Calculation '{calcType}' completed.", result);
+        var itemCount = ((dynamic)result!).GetType().GetProperty("totalDucts") is not null
+            ? (int)((dynamic)result!).totalDucts
+            : ((dynamic)result!).GetType().GetProperty("totalPipes") is not null
+                ? (int)((dynamic)result!).totalPipes
+                : ((dynamic)result!).GetType().GetProperty("systemCount") is not null
+                    ? (int)((dynamic)result!).systemCount
+                    : 0;
+
+        var summary = new CalcResultSummary { TotalItems = itemCount, IssueCount = 0 };
+        var delta = ComputeDelta(context, summary);
+        SaveResultForDelta(context, summary);
+
+        var msg = $"Calculation '{calcType}' completed.";
+        if (delta is not null) msg += $"\n{delta.Summary}";
+
+        var followUps = new List<FollowUpSuggestion>();
+        if (calcType == "duct_summary")
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "duct_sizing_analysis",
+                Reason = "Check velocity compliance for these ducts"
+            });
+        else if (calcType == "pipe_summary")
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "pipe_sizing_analysis",
+                Reason = "Check velocity compliance for these pipes"
+            });
+        else if (calcType == "system_airflow")
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "calculate_pressure_drop",
+                Reason = "Calculate pressure drop for these systems"
+            });
+
+        msg = AppendFollowUps(msg, followUps);
+        return SkillResult.Ok(msg, result);
     }
 
     private static object CalculateDuctSummary(Document doc, string? systemName)

@@ -4,6 +4,7 @@ namespace RevitChatBot.RevitServices;
 
 public interface IRevitElementService
 {
+    FluentCollector Collect(Document doc);
     List<Element> GetElementsByCategory(Document doc, BuiltInCategory category);
     List<Element> GetElementsByType(Document doc, Type elementType);
     Element? GetElementById(Document doc, ElementId id);
@@ -23,6 +24,7 @@ public interface IRevitDocumentService
 
 public interface IRevitMEPService
 {
+    FluentCollector Collect(Document doc);
     List<Element> GetMEPSystems(Document doc);
     List<Element> GetDucts(Document doc, string? systemName = null);
     List<Element> GetPipes(Document doc, string? systemName = null);

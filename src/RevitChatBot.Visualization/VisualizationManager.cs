@@ -1,5 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitChatBot.Core.Skills;
+using RevitChatBot.Visualization.Rendering;
 using RevitChatBot.Visualization.Server;
 
 namespace RevitChatBot.Visualization;
@@ -173,6 +175,155 @@ public class VisualizationManager : IDisposable
     {
         _curveServer.AddGeometries(routeSegments, VisualizationStyle.RoutingPath, tag);
         RecordAction("route_path", tag, VisualizationStyle.RoutingPath);
+    }
+
+    /// <summary>
+    /// Render a full sprinkler routing preview from computed route data.
+    /// Draws head markers, coverage circles, branch/main/riser pipes,
+    /// fitting markers, and blind-spot warnings — all as transient geometry.
+    /// </summary>
+    public int PreviewSprinklerRoute(SprinklerRouteData routeData, string tag = "sprinkler_preview")
+    {
+        ClearByTag(tag);
+        ClearByTag(tag + "_branch");
+        ClearByTag(tag + "_main");
+        ClearByTag(tag + "_fittings");
+        ClearByTag(tag + "_coverage");
+
+        int rendered = 0;
+
+        foreach (var head in routeData.HeadPositions)
+        {
+            var pt = new XYZ(head.X, head.Y, head.Z);
+            var sphere = RenderHelper.CreateSmallSphere(pt, 0.15);
+            if (sphere is not null)
+            {
+                _solidServer.AddGeometry(sphere, VisualizationStyle.SprinklerHead, tag);
+                rendered++;
+            }
+
+            if (routeData.CoverageRadiusFeet > 0)
+            {
+                var circle = RenderHelper.CreateCircle(pt, routeData.CoverageRadiusFeet);
+                if (circle is not null)
+                    _curveServer.AddGeometry(circle, VisualizationStyle.CoverageArea, tag + "_coverage");
+            }
+        }
+
+        foreach (var seg in routeData.BranchSegments)
+        {
+            var line = TryCreateLine(seg);
+            if (line is not null)
+            {
+                _curveServer.AddGeometry(line, VisualizationStyle.RoutingPath, tag + "_branch");
+                rendered++;
+            }
+        }
+
+        foreach (var seg in routeData.MainSegments)
+        {
+            var line = TryCreateLine(seg);
+            if (line is not null)
+            {
+                _curveServer.AddGeometry(line, VisualizationStyle.CrossMain, tag + "_main");
+                rendered++;
+            }
+        }
+
+        foreach (var fitting in routeData.FittingPositions)
+        {
+            var pt = new XYZ(fitting.X, fitting.Y, fitting.Z);
+            var box = RenderHelper.CreateMarkerBox(pt, 0.12);
+            _bboxServer.AddGeometry(box, VisualizationStyle.FittingMarker, tag + "_fittings");
+            rendered++;
+        }
+
+        RecordAction("sprinkler_preview", tag, VisualizationStyle.RoutingPath,
+            $"heads={routeData.TotalHeads}, segments={routeData.TotalSegments}");
+
+        return rendered;
+    }
+
+    public void ClearSprinklerPreview(string tag = "sprinkler_preview")
+    {
+        ClearByTag(tag);
+        ClearByTag(tag + "_branch");
+        ClearByTag(tag + "_main");
+        ClearByTag(tag + "_fittings");
+        ClearByTag(tag + "_coverage");
+    }
+
+    /// <summary>
+    /// Generic MEP route preview for auto-connect skills (HVAC, Plumbing, etc.).
+    /// Draws endpoint markers, branch/main segments, and fitting markers.
+    /// </summary>
+    public int PreviewMepRoute(MepAutoRouteData routeData, string tag = "mep_route_preview")
+    {
+        ClearByTag(tag);
+        ClearByTag(tag + "_branch");
+        ClearByTag(tag + "_main");
+        ClearByTag(tag + "_fittings");
+
+        int rendered = 0;
+
+        foreach (var ep in routeData.EndpointPositions)
+        {
+            var pt = new XYZ(ep.X, ep.Y, ep.Z);
+            var sphere = RenderHelper.CreateSmallSphere(pt, 0.12);
+            if (sphere is not null)
+            {
+                _solidServer.AddGeometry(sphere, VisualizationStyle.Selection, tag);
+                rendered++;
+            }
+        }
+
+        foreach (var seg in routeData.BranchSegments)
+        {
+            var line = TryCreateLine(seg);
+            if (line is not null)
+            {
+                _curveServer.AddGeometry(line, VisualizationStyle.RoutingPath, tag + "_branch");
+                rendered++;
+            }
+        }
+
+        foreach (var seg in routeData.MainSegments)
+        {
+            var line = TryCreateLine(seg);
+            if (line is not null)
+            {
+                _curveServer.AddGeometry(line, VisualizationStyle.CrossMain, tag + "_main");
+                rendered++;
+            }
+        }
+
+        foreach (var fitting in routeData.FittingPositions)
+        {
+            var pt = new XYZ(fitting.X, fitting.Y, fitting.Z);
+            var box = RenderHelper.CreateMarkerBox(pt, 0.10);
+            _bboxServer.AddGeometry(box, VisualizationStyle.FittingMarker, tag + "_fittings");
+            rendered++;
+        }
+
+        RecordAction("mep_route_preview", tag, VisualizationStyle.RoutingPath,
+            $"domain={routeData.Domain}, endpoints={routeData.TotalEndpoints}, segments={routeData.TotalSegments}");
+
+        return rendered;
+    }
+
+    private static Line? TryCreateLine(SegmentData seg)
+    {
+        try
+        {
+            var start = new XYZ(seg.Start.X, seg.Start.Y, seg.Start.Z);
+            var end = new XYZ(seg.End.X, seg.End.Y, seg.End.Z);
+            if (start.DistanceTo(end) < 0.01) return null;
+            return Line.CreateBound(start, end);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // --- Cleanup ---

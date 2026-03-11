@@ -59,10 +59,19 @@ public class AgentOrchestrator
     private readonly LearningCortex? _learningCortex;
     private readonly FailureRecoveryLearner? _failureRecovery;
 
+    private readonly KnowledgeCodeTemplateStore? _codeTemplateStore;
+    private readonly SkillKnowledgeIndex? _skillKnowledgeIndex;
+    private readonly DynamicCodeExamplesLibrary? _dynamicExamplesLibrary;
+    private readonly CodeGenKnowledgeEnricher? _codeGenKnowledgeEnricher;
+    private readonly SkillKnowledgeRecipeStore? _recipeStore;
+    private readonly ContextUsageTracker? _contextUsageTracker;
+
     private readonly WarningsDeltaTracker _warningsDeltaTracker = new();
     private readonly List<ChatMessage> _history = [];
 
     private string? _lastNonVizSkillName;
+    private string? _lastFailedSkillName;
+    private string? _lastFailedSkillError;
     private Action<string, string, Dictionary<string, object?>, bool>? _visualFeedbackTracker;
 
     /// <summary>
@@ -129,7 +138,13 @@ public class AgentOrchestrator
         CompositeSkillEngine? compositeEngine = null,
         SelfLearningPersistenceManager? persistenceManager = null,
         LearningCortex? learningCortex = null,
-        FailureRecoveryLearner? failureRecovery = null)
+        FailureRecoveryLearner? failureRecovery = null,
+        KnowledgeCodeTemplateStore? codeTemplateStore = null,
+        SkillKnowledgeIndex? skillKnowledgeIndex = null,
+        DynamicCodeExamplesLibrary? dynamicExamplesLibrary = null,
+        CodeGenKnowledgeEnricher? codeGenKnowledgeEnricher = null,
+        SkillKnowledgeRecipeStore? recipeStore = null,
+        ContextUsageTracker? contextUsageTracker = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -159,6 +174,12 @@ public class AgentOrchestrator
         _persistenceManager = persistenceManager;
         _learningCortex = learningCortex;
         _failureRecovery = failureRecovery;
+        _codeTemplateStore = codeTemplateStore;
+        _skillKnowledgeIndex = skillKnowledgeIndex;
+        _dynamicExamplesLibrary = dynamicExamplesLibrary;
+        _codeGenKnowledgeEnricher = codeGenKnowledgeEnricher;
+        _recipeStore = recipeStore;
+        _contextUsageTracker = contextUsageTracker;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -301,7 +322,7 @@ public class AgentOrchestrator
             messages.Add(ChatMessage.FromSystem(analysisHint));
         }
 
-        var codeGenContext = BuildCodeGenContext();
+        var codeGenContext = await BuildCodeGenContextAsync(effectiveQuery, analysis, cancellationToken);
         if (!string.IsNullOrWhiteSpace(codeGenContext))
             messages.Add(ChatMessage.FromSystem(codeGenContext));
 
@@ -570,6 +591,17 @@ public class AgentOrchestrator
                 if (result.Success)
                 {
                     _fewShotLearning?.RecordSuccess(effectiveQuery, toolCall.FunctionName, toolCall.Arguments);
+
+                    if (_lastFailedSkillName is not null)
+                    {
+                        _failureRecovery?.RecordRecovery(
+                            _lastFailedSkillName, toolCall.FunctionName,
+                            _lastFailedSkillError ?? "", recoverySucceeded: true);
+                        _learningCortex?.SkillCorrelator.RecordFailureRecovery(
+                            _lastFailedSkillName, toolCall.FunctionName, recovered: true);
+                        _lastFailedSkillName = null;
+                        _lastFailedSkillError = null;
+                    }
                 }
                 else if (_failureRecovery is not null)
                 {
@@ -577,8 +609,18 @@ public class AgentOrchestrator
                         toolCall.FunctionName, toolCall.Arguments,
                         result.Message ?? "unknown error");
 
+                    _lastFailedSkillName = toolCall.FunctionName;
+                    _lastFailedSkillError = result.Message;
+
+                    var fallback = _learningCortex?.SkillCorrelator.GetBestFallback(toolCall.FunctionName);
                     var recoveryAdvice = _failureRecovery.GetRecoveryAdvice(
                         toolCall.FunctionName, result.Message ?? "");
+
+                    if (fallback is not null && recoveryAdvice is null)
+                        recoveryAdvice = $"Try '{fallback}' as fallback (learned from past recoveries).";
+                    else if (fallback is not null && recoveryAdvice is not null)
+                        recoveryAdvice += $" Also consider '{fallback}' as learned fallback.";
+
                     if (recoveryAdvice is not null)
                         result.Message += $"\n[Recovery hint: {recoveryAdvice}]";
                 }
@@ -638,14 +680,67 @@ public class AgentOrchestrator
             if (_selfEvaluator != null && actionStepCount >= SelfEvalMinSteps)
                 _ = SelfEvaluateAsync(plan, analysis, cancellationToken);
 
-            // 5d. Learning Cortex — fan out to all sub-analyzers
+            // 5d. Record recipe (skill+knowledge combo) for future reuse
+            try
+            {
+                var retrievedKnowledge = _contextManager.ContextCache?.Extra
+                    ?.GetValueOrDefault("retrieved_knowledge_sources") as List<string>;
+                var codeGenCode = plan.Steps
+                    .FirstOrDefault(s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Action)
+                    ?.Content;
+                _recipeStore?.RecordFromPlan(plan, analysis, retrievedKnowledge, codeGenCode);
+            }
+            catch { /* non-critical */ }
+
+            // 5e. Record successful codegen as learned example
+            try
+            {
+                if (_dynamicExamplesLibrary != null)
+                {
+                    foreach (var step in plan.Steps.Where(
+                        s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Observation))
+                    {
+                        var actionStep = plan.Steps
+                            .LastOrDefault(s => s.SkillName == "execute_revit_code"
+                                && s.Type == AgentStepType.Action
+                                && plan.Steps.IndexOf(s) < plan.Steps.IndexOf(step));
+                        if (actionStep?.Content != null && !step.Content.Contains("FAILED"))
+                        {
+                            _dynamicExamplesLibrary.LearnFromSuccess(
+                                actionStep.Content, plan.Goal, effectiveQuery, analysis, 0);
+                        }
+                    }
+                    _ = Task.Run(() => _dynamicExamplesLibrary.SaveAsync(CancellationToken.None));
+                }
+            }
+            catch { /* non-critical */ }
+
+            // 5f. Learning Cortex — fan out to all sub-analyzers
             try
             {
                 _learningCortex?.Ingest(plan, analysis, _memory?.Analytics);
             }
             catch { /* non-critical */ }
 
-            // 5e. Learning Cortex — run analysis cycle (non-blocking)
+            // 5f2. Context usage tracking — learn which context sections are actually useful
+            try
+            {
+                if (_contextUsageTracker is not null && plan.FinalAnswer is not null)
+                {
+                    _contextUsageTracker.TrackUsage(
+                        context.Entries.Keys, plan.FinalAnswer, analysis?.Intent);
+
+                    if (_contextOptimizer is not null)
+                    {
+                        var adjustments = _contextUsageTracker.GetPriorityAdjustments();
+                        if (adjustments.Count > 0)
+                            _contextOptimizer.UpdateLearnedPriorities(adjustments);
+                    }
+                }
+            }
+            catch { /* non-critical */ }
+
+            // 5g. Learning Cortex — run analysis cycle (non-blocking)
             if (_learningCortex is not null)
             {
                 _ = Task.Run(() =>
@@ -661,8 +756,12 @@ public class AgentOrchestrator
                 }, CancellationToken.None);
             }
 
-            // 5f. Notify persistence manager
+            // 5h. Notify persistence manager
             _persistenceManager?.NotifyChange();
+
+            // 5i. Persist recipe store (non-blocking)
+            if (_recipeStore != null)
+                _ = Task.Run(() => _recipeStore.SaveAsync(CancellationToken.None));
         }
 
         return plan;
@@ -892,7 +991,8 @@ public class AgentOrchestrator
         return basePrompt + "\n\n" + staticContent;
     }
 
-    private string BuildCodeGenContext()
+    private async Task<string> BuildCodeGenContextAsync(
+        string query, QueryAnalysis? analysis, CancellationToken ct)
     {
         var parts = new List<string>();
 
@@ -911,6 +1011,43 @@ public class AgentOrchestrator
         var compositeSkills = _compositeEngine?.GetCompositeSkillsSummary();
         if (!string.IsNullOrWhiteSpace(compositeSkills))
             parts.Add(compositeSkills);
+
+        // --- NEW: Wrapper API reference (always include — helps LLM write concise code) ---
+        parts.Add(WrapperApiReference.GetReference());
+
+        // --- NEW: Code templates from knowledge docs ---
+        var templates = _codeTemplateStore?.FindTemplates(
+            query, analysis?.Intent, analysis?.Category);
+        if (!string.IsNullOrWhiteSpace(templates))
+            parts.Add(templates);
+
+        // --- NEW: Skill knowledge index (existing skills the LLM should call instead of codegen) ---
+        var skillHints = _skillKnowledgeIndex?.GetContextForCodeGen(analysis, query);
+        if (!string.IsNullOrWhiteSpace(skillHints))
+            parts.Add(skillHints);
+
+        // --- NEW: Learned code examples from successful runs ---
+        var learnedExamples = _dynamicExamplesLibrary?.GetExamplesForContext(analysis, query);
+        if (!string.IsNullOrWhiteSpace(learnedExamples))
+            parts.Add(learnedExamples);
+
+        // --- NEW: Recipe store — proven skill+knowledge combos ---
+        var recipeContext = _recipeStore?.GetRecipeContext(analysis, query);
+        if (!string.IsNullOrWhiteSpace(recipeContext))
+            parts.Add(recipeContext);
+
+        // --- NEW: RAG knowledge for domain standards/formulas ---
+        if (_codeGenKnowledgeEnricher != null)
+        {
+            try
+            {
+                var knowledgeContext = await _codeGenKnowledgeEnricher.EnrichForCodeGen(
+                    query, analysis, ct);
+                if (!string.IsNullOrWhiteSpace(knowledgeContext))
+                    parts.Add(knowledgeContext);
+            }
+            catch { /* non-critical */ }
+        }
 
         return parts.Count > 0
             ? "--- CODEGEN SELF-LEARNING CONTEXT ---\n" + string.Join("\n\n", parts)

@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.MEP.Skills.Calculation;
 
 namespace RevitChatBot.MEP.Skills.Plumbing;
 
@@ -16,9 +17,11 @@ namespace RevitChatBot.MEP.Skills.Plumbing;
 [SkillParameter("pipe_type", "string",
     "Filter by pipe system type", isRequired: false,
     allowedValues: new[] { "supply", "return", "sanitary", "storm", "all" })]
-public class PipeSizingSkill : ISkill
+public class PipeSizingSkill : CalculationSkillBase
 {
-    public async Task<SkillResult> ExecuteAsync(
+    protected override string SkillName => "pipe_sizing_analysis";
+
+    public override async Task<SkillResult> ExecuteAsync(
         SkillContext context,
         Dictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
@@ -27,8 +30,8 @@ public class PipeSizingSkill : ISkill
             return SkillResult.Fail("Revit API not available.");
 
         var systemName = parameters.GetValueOrDefault("system_name")?.ToString();
-        var maxVel = ParseDouble(parameters.GetValueOrDefault("max_velocity_fps"), 8);
-        var pipeType = parameters.GetValueOrDefault("pipe_type")?.ToString() ?? "all";
+        var maxVel = GetParamDouble(parameters, context, "max_velocity_fps", 8);
+        var pipeType = GetParamString(parameters, context, "pipe_type", "all");
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -104,14 +107,26 @@ public class PipeSizingSkill : ISkill
             };
         });
 
-        return SkillResult.Ok("Pipe sizing analysis completed.", result);
-    }
+        var totalPipes = (int)((dynamic)result!).totalPipes;
+        var issueCount = (int)((dynamic)result!).issueCount;
+        var calcSummary = new CalcResultSummary { TotalItems = totalPipes, IssueCount = issueCount };
+        var delta = ComputeDelta(context, calcSummary);
+        SaveResultForDelta(context, calcSummary);
 
-    private static double ParseDouble(object? value, double fallback)
-    {
-        if (value is double d) return d;
-        if (value is int i) return i;
-        if (value is string s && double.TryParse(s, out var parsed)) return parsed;
-        return fallback;
+        var msg = "Pipe sizing analysis completed.";
+        if (delta is not null) msg += $"\n{delta.Summary}";
+
+        var followUps = new List<FollowUpSuggestion>();
+        if (issueCount > 0)
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "calculate_pressure_drop",
+                Reason = $"{issueCount} velocity issue(s) — check pressure drop",
+                PrefilledParams = { ["system_type"] = "pipe" }
+            });
+
+        msg = AppendFollowUps(msg, followUps);
+        return OkPaginated(msg, result, totalPipes,
+            Math.Min(totalPipes, 20), "pipes");
     }
 }

@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.MEP.Skills.Calculation;
 
 namespace RevitChatBot.MEP.Skills.HVAC;
 
@@ -15,9 +16,11 @@ namespace RevitChatBot.MEP.Skills.HVAC;
     "Maximum allowed velocity in FPM (default: 2000 for main ducts)", isRequired: false)]
 [SkillParameter("min_velocity_fpm", "number",
     "Minimum recommended velocity in FPM (default: 600)", isRequired: false)]
-public class DuctSizingSkill : ISkill
+public class DuctSizingSkill : CalculationSkillBase
 {
-    public async Task<SkillResult> ExecuteAsync(
+    protected override string SkillName => "duct_sizing_analysis";
+
+    public override async Task<SkillResult> ExecuteAsync(
         SkillContext context,
         Dictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
@@ -26,8 +29,8 @@ public class DuctSizingSkill : ISkill
             return SkillResult.Fail("Revit API not available.");
 
         var systemName = parameters.GetValueOrDefault("system_name")?.ToString();
-        var maxVel = ParseDouble(parameters.GetValueOrDefault("max_velocity_fpm"), 2000);
-        var minVel = ParseDouble(parameters.GetValueOrDefault("min_velocity_fpm"), 600);
+        var maxVel = GetParamDouble(parameters, context, "max_velocity_fpm", 2000);
+        var minVel = GetParamDouble(parameters, context, "min_velocity_fpm", 600);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -80,14 +83,26 @@ public class DuctSizingSkill : ISkill
             };
         });
 
-        return SkillResult.Ok("Duct sizing analysis completed.", result);
-    }
+        var totalDucts = (int)((dynamic)result!).totalDucts;
+        var issueCount = (int)((dynamic)result!).issueCount;
+        var calcSummary = new CalcResultSummary { TotalItems = totalDucts, IssueCount = issueCount };
+        var delta = ComputeDelta(context, calcSummary);
+        SaveResultForDelta(context, calcSummary);
 
-    private static double ParseDouble(object? value, double fallback)
-    {
-        if (value is double d) return d;
-        if (value is int i) return i;
-        if (value is string s && double.TryParse(s, out var parsed)) return parsed;
-        return fallback;
+        var msg = "Duct sizing analysis completed.";
+        if (delta is not null) msg += $"\n{delta.Summary}";
+
+        var followUps = new List<FollowUpSuggestion>();
+        if (issueCount > 0)
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "calculate_pressure_drop",
+                Reason = $"{issueCount} velocity issue(s) found — check pressure drop impact",
+                PrefilledParams = { ["system_type"] = "duct" }
+            });
+
+        msg = AppendFollowUps(msg, followUps);
+        return OkPaginated(msg, result, totalDucts,
+            Math.Min(totalDucts, 20), "ducts");
     }
 }

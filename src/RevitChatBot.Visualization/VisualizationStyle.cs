@@ -62,6 +62,38 @@ public class VisualizationStyle
         Color = new Color(255, 255, 0), Transparency = 80
     };
 
+    // --- Sprinkler routing preview presets ---
+
+    public static VisualizationStyle SprinklerHead { get; } = new()
+    {
+        Color = new Color(0, 150, 255), Transparency = 40
+    };
+
+    public static VisualizationStyle CoverageArea { get; } = new()
+    {
+        Color = new Color(100, 255, 100), Transparency = 180
+    };
+
+    public static VisualizationStyle CrossMain { get; } = new()
+    {
+        Color = new Color(255, 200, 0), Transparency = 50
+    };
+
+    public static VisualizationStyle Riser { get; } = new()
+    {
+        Color = new Color(200, 100, 255), Transparency = 50
+    };
+
+    public static VisualizationStyle FittingMarker { get; } = new()
+    {
+        Color = new Color(255, 255, 255), Transparency = 80
+    };
+
+    public static VisualizationStyle BlindSpot { get; } = new()
+    {
+        Color = new Color(255, 80, 0), Transparency = 120
+    };
+
     public static VisualizationStyle FromSeverity(string severity) => severity.ToLowerInvariant() switch
     {
         "critical" => Critical,
@@ -70,6 +102,12 @@ public class VisualizationStyle
         "ok" or "pass" => Ok,
         "clash" => Clash,
         "route" or "routing" or "path" => RoutingPath,
+        "sprinkler" => SprinklerHead,
+        "coverage" => CoverageArea,
+        "main" or "crossmain" => CrossMain,
+        "riser" => Riser,
+        "fitting" => FittingMarker,
+        "blindspot" => BlindSpot,
         _ => Default
     };
 }

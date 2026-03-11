@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.MEP.Skills.Calculation;
 
 namespace RevitChatBot.MEP.Skills.HVAC;
 
@@ -13,9 +14,11 @@ namespace RevitChatBot.MEP.Skills.HVAC;
     "Returns area, volume, design airflow, and load data per space.")]
 [SkillParameter("level_name", "string", "Filter by level name (optional)", isRequired: false)]
 [SkillParameter("space_name", "string", "Filter by space name (optional)", isRequired: false)]
-public class HvacLoadCalculationSkill : ISkill
+public class HvacLoadCalculationSkill : CalculationSkillBase
 {
-    public async Task<SkillResult> ExecuteAsync(
+    protected override string SkillName => "hvac_load_calculation";
+
+    public override async Task<SkillResult> ExecuteAsync(
         SkillContext context,
         Dictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
@@ -82,6 +85,40 @@ public class HvacLoadCalculationSkill : ISkill
             };
         });
 
-        return SkillResult.Ok("HVAC load calculation completed.", result);
+        var totalSpaces = (int)((dynamic)result!).totalSpaces;
+        var summary = new CalcResultSummary
+        {
+            TotalItems = totalSpaces,
+            IssueCount = 0,
+            KeyMetrics =
+            {
+                ["totalCoolingW"] = (double)((dynamic)result!).totalCoolingLoadW,
+                ["totalHeatingW"] = (double)((dynamic)result!).totalHeatingLoadW
+            }
+        };
+        var delta = ComputeDelta(context, summary);
+        SaveResultForDelta(context, summary);
+
+        var msg = "HVAC load calculation completed.";
+        if (delta is not null) msg += $"\n{delta.Summary}";
+
+        var followUps = new List<FollowUpSuggestion>();
+        if (totalSpaces > 0)
+        {
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "duct_sizing_analysis",
+                Reason = "Verify duct sizing matches the calculated loads"
+            });
+            followUps.Add(new FollowUpSuggestion
+            {
+                SkillName = "energy_analysis",
+                Reason = "Check insulation coverage for thermal efficiency"
+            });
+        }
+
+        msg = AppendFollowUps(msg, followUps);
+        return OkPaginated(msg, result, totalSpaces,
+            Math.Min(totalSpaces, 50), "spaces");
     }
 }

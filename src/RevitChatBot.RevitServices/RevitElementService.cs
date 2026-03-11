@@ -4,9 +4,11 @@ namespace RevitChatBot.RevitServices;
 
 public class RevitElementService : IRevitElementService
 {
+    public FluentCollector Collect(Document doc) => new(doc);
+
     public List<Element> GetElementsByCategory(Document doc, BuiltInCategory category)
     {
-        return new FilteredElementCollector(doc)
+        return new FluentCollector(doc)
             .OfCategory(category)
             .WhereElementIsNotElementType()
             .ToList();
@@ -14,7 +16,7 @@ public class RevitElementService : IRevitElementService
 
     public List<Element> GetElementsByType(Document doc, Type elementType)
     {
-        return new FilteredElementCollector(doc)
+        return new FluentCollector(doc)
             .OfClass(elementType)
             .WhereElementIsNotElementType()
             .ToList();
