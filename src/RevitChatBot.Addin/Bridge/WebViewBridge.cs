@@ -514,7 +514,7 @@ public class WebViewBridge : IDisposable
                     break;
 
                 case BridgeMessageTypes.SettingsUpdate:
-                    HandleSettingsUpdate(message.Data);
+                    await HandleSettingsUpdateAsync(message.Data);
                     break;
 
                 case "partial_input":
@@ -688,7 +688,7 @@ public class WebViewBridge : IDisposable
         }
     }
 
-    private void HandleSettingsUpdate(Dictionary<string, object?>? data)
+    private async Task HandleSettingsUpdateAsync(Dictionary<string, object?>? data)
     {
         if (data is null || _ollamaService is null) return;
 
@@ -714,6 +714,42 @@ public class WebViewBridge : IDisposable
                 && bool.TryParse(lp.ToString(), out var lpVal))
                 opts.Logprobs = lpVal;
         });
+
+        try
+        {
+            var opts = _ollamaService.GetCurrentOptions();
+            var modelInfo = await _ollamaService.ShowModelAsync(opts.Model).ConfigureAwait(false);
+            if (modelInfo is not null)
+            {
+                if (modelInfo.ContextLength > 0)
+                    _contextOptimizer?.UpdateMaxTokens(modelInfo.ContextLength);
+
+                SendToUI(new BridgeMessage
+                {
+                    Type = BridgeMessageTypes.AssistantMessage,
+                    Content = $"✅ Model **{opts.Model}** connected successfully " +
+                              $"(ctx: {modelInfo.ContextLength}, {modelInfo.ParameterSize}, {modelInfo.QuantizationLevel})"
+                });
+            }
+            else
+            {
+                SendToUI(new BridgeMessage
+                {
+                    Type = BridgeMessageTypes.Error,
+                    Content = $"⚠️ Model \"{opts.Model}\" not found. Check if it is installed: ollama pull {opts.Model}"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.Error,
+                Content = $"⚠️ Cannot connect to Ollama at {_ollamaService.GetCurrentOptions().BaseUrl}: {ex.Message}"
+            });
+        }
+
+        await HandleHealthCheckAsync().ConfigureAwait(false);
     }
 
     private void HandleAutomationModeChange(string modeName)

@@ -12,18 +12,20 @@ namespace RevitChatBot.Core.LLM;
 /// </summary>
 public class OllamaService : IOllamaService, IDisposable
 {
-    private readonly HttpClient _httpClient;
+    private HttpClient _httpClient;
     private OllamaOptions _options;
 
     public OllamaService(OllamaOptions? options = null)
     {
         _options = options ?? new OllamaOptions();
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(_options.BaseUrl),
-            Timeout = TimeSpan.FromMinutes(5)
-        };
+        _httpClient = CreateHttpClient(_options.BaseUrl);
     }
+
+    private static HttpClient CreateHttpClient(string baseUrl) => new()
+    {
+        BaseAddress = new Uri(baseUrl),
+        Timeout = TimeSpan.FromMinutes(5)
+    };
 
     public async Task<ChatMessage> ChatAsync(
         List<ChatMessage> messages,
@@ -240,8 +242,14 @@ public class OllamaService : IOllamaService, IDisposable
 
     public void UpdateOptions(Action<OllamaOptions> configure)
     {
+        var previousBaseUrl = _options.BaseUrl;
         configure(_options);
-        _httpClient.BaseAddress = new Uri(_options.BaseUrl);
+        if (!string.Equals(previousBaseUrl, _options.BaseUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            var oldClient = _httpClient;
+            _httpClient = CreateHttpClient(_options.BaseUrl);
+            oldClient.Dispose();
+        }
     }
 
     public OllamaOptions GetCurrentOptions() => _options;
