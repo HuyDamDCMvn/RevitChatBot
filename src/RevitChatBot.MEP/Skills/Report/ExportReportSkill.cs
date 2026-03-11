@@ -15,6 +15,10 @@ namespace RevitChatBot.MEP.Skills.Report;
 [SkillParameter("system_name", "string",
     "Optional system name to filter",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class ExportReportSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -27,6 +31,7 @@ public class ExportReportSkill : ISkill
 
         var reportType = parameters.GetValueOrDefault("report_type")?.ToString() ?? "project_overview";
         var systemName = parameters.GetValueOrDefault("system_name")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -35,9 +40,9 @@ public class ExportReportSkill : ISkill
             return reportType switch
             {
                 "project_overview" => GenerateProjectOverview(document),
-                "duct_schedule" => GenerateElementSchedule(document, BuiltInCategory.OST_DuctCurves, "Duct"),
-                "pipe_schedule" => GenerateElementSchedule(document, BuiltInCategory.OST_PipeCurves, "Pipe"),
-                "equipment_list" => GenerateElementSchedule(document, BuiltInCategory.OST_MechanicalEquipment, "Equipment"),
+                "duct_schedule" => GenerateElementSchedule(document, BuiltInCategory.OST_DuctCurves, "Duct", scope),
+                "pipe_schedule" => GenerateElementSchedule(document, BuiltInCategory.OST_PipeCurves, "Pipe", scope),
+                "equipment_list" => GenerateElementSchedule(document, BuiltInCategory.OST_MechanicalEquipment, "Equipment", scope),
                 "system_summary" => GenerateSystemSummary(document),
                 _ => (object)"Unknown report type"
             };
@@ -73,9 +78,9 @@ public class ExportReportSkill : ISkill
     }
 
     private static object GenerateElementSchedule(
-        Document doc, BuiltInCategory category, string label)
+        Document doc, BuiltInCategory category, string label, string scope)
     {
-        var elements = new FilteredElementCollector(doc)
+        var elements = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(category)
             .WhereElementIsNotElementType()
             .ToList();

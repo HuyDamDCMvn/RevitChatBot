@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -21,6 +22,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckSystemBalanceSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -34,6 +39,7 @@ public class CheckSystemBalanceSkill : ISkill
         var systemType = parameters.GetValueOrDefault("system_type")?.ToString() ?? "hvac";
         var maxImbalance = ParseDouble(parameters.GetValueOrDefault("max_imbalance_percent"), 10);
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -41,9 +47,9 @@ public class CheckSystemBalanceSkill : ISkill
             var systemFlows = new Dictionary<string, SystemFlowData>();
 
             if (systemType == "hvac")
-                AnalyzeHvacBalance(document, levelFilter, systemFlows);
+                AnalyzeHvacBalance(document, scope, levelFilter, systemFlows);
             else
-                AnalyzeHydronicBalance(document, levelFilter, systemFlows);
+                AnalyzeHydronicBalance(document, scope, levelFilter, systemFlows);
 
             var results = systemFlows.Values
                 .OrderByDescending(s => s.ImbalancePercent)
@@ -71,10 +77,10 @@ public class CheckSystemBalanceSkill : ISkill
         return SkillResult.Ok("System balance check completed.", result);
     }
 
-    private static void AnalyzeHvacBalance(Document doc, string? levelFilter,
+    private static void AnalyzeHvacBalance(Document doc, string scope, string? levelFilter,
         Dictionary<string, SystemFlowData> flows)
     {
-        var spaces = new FilteredElementCollector(doc)
+        var spaces = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(BuiltInCategory.OST_MEPSpaces)
             .WhereElementIsNotElementType()
             .ToList();
@@ -105,7 +111,7 @@ public class CheckSystemBalanceSkill : ISkill
             data.ReturnFlow += returnLps;
         }
 
-        var ducts = new FilteredElementCollector(doc)
+        var ducts = ViewScopeHelper.CreateCollector(doc, scope)
             .OfClass(typeof(Duct))
             .WhereElementIsNotElementType()
             .Cast<Duct>()
@@ -139,10 +145,10 @@ public class CheckSystemBalanceSkill : ISkill
         }
     }
 
-    private static void AnalyzeHydronicBalance(Document doc, string? levelFilter,
+    private static void AnalyzeHydronicBalance(Document doc, string scope, string? levelFilter,
         Dictionary<string, SystemFlowData> flows)
     {
-        var pipes = new FilteredElementCollector(doc)
+        var pipes = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(BuiltInCategory.OST_PipeCurves)
             .WhereElementIsNotElementType()
             .ToList();

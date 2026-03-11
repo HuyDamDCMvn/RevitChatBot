@@ -2,11 +2,16 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Query;
 
 [Skill("system_analysis", "Analyze MEP systems: ducts and pipes grouped by system name and classification, with total length and element counts.")]
 [SkillParameter("typeFilter", "string", "Filter by type: all, mechanical, piping. Default: all", isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class SystemAnalysisSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -18,6 +23,7 @@ public class SystemAnalysisSkill : ISkill
             return SkillResult.Fail("Revit API not available.");
 
         var typeFilter = (parameters.GetValueOrDefault("typeFilter")?.ToString() ?? "all").ToLowerInvariant();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -26,7 +32,7 @@ public class SystemAnalysisSkill : ISkill
 
             if (typeFilter is "all" or "mechanical")
             {
-                var ducts = new FilteredElementCollector(document)
+                var ducts = ViewScopeHelper.CreateCollector(document, scope)
                     .OfClass(typeof(Duct))
                     .WhereElementIsNotElementType()
                     .Cast<Duct>();

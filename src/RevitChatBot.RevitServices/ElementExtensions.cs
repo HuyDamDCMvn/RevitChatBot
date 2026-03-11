@@ -409,3 +409,52 @@ public static class ElementExtensions
 
     #endregion
 }
+
+/// <summary>
+/// Helpers for skill-level view scoping. Parses the "scope" parameter and resolves
+/// the active view ID so skills can use <c>FilteredElementCollector(doc, viewId)</c>.
+/// </summary>
+public static class ViewScopeHelper
+{
+    public const string ParamName = "scope";
+    public const string ActiveView = "active_view";
+    public const string EntireModel = "entire_model";
+
+    public static string ParseScope(Dictionary<string, object?> parameters, string defaultScope = EntireModel)
+    {
+        var raw = parameters.GetValueOrDefault(ParamName) as string;
+        if (string.IsNullOrWhiteSpace(raw)) return defaultScope;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "active_view" or "activeview" or "view" => ActiveView,
+            _ => EntireModel
+        };
+    }
+
+    public static FilteredElementCollector CreateCollector(
+        Document doc, string scope)
+    {
+        if (scope == ActiveView)
+        {
+            var viewId = doc.ActiveView?.Id;
+            if (viewId is not null && viewId != ElementId.InvalidElementId)
+                return new FilteredElementCollector(doc, viewId);
+        }
+        return new FilteredElementCollector(doc);
+    }
+
+    public static FluentCollector CreateFluent(Document doc, string scope)
+    {
+        var fc = new FluentCollector(doc);
+        if (scope == ActiveView)
+        {
+            var viewId = doc.ActiveView?.Id;
+            if (viewId is not null && viewId != ElementId.InvalidElementId)
+                fc.InView(viewId);
+        }
+        return fc;
+    }
+
+    public static string ScopeLabel(string scope) =>
+        scope == ActiveView ? " (active view)" : " (entire model)";
+}

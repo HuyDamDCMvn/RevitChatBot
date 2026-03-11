@@ -3,9 +3,14 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 [Skill("check_disconnected_mep",
     "Check disconnected MEP elements. Iterates ducts, pipes, flex ducts, flex pipes, fittings, " +
     "accessories, equipment, and terminals. Returns list of elements with unconnected connectors.")]
@@ -34,6 +39,8 @@ public class CheckConnectionSkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
+
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
@@ -41,7 +48,7 @@ public class CheckConnectionSkill : ISkill
 
             foreach (var (label, category) in MepCategories)
             {
-                var elements = document.GetInstances(category).ToList();
+                var elements = ViewScopeHelper.CreateCollector(document, scope).OfCategory(category).WhereElementIsNotElementType().ToList();
 
                 foreach (var elem in elements)
                 {

@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -8,6 +9,10 @@ namespace RevitChatBot.MEP.Skills.Check;
     "name containing 'fire' or 'damper', checks if all connectors are connected. Returns damper list with connected status.")]
 [SkillParameter("level", "string",
     "Optional level name to filter dampers by", isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckFireDamperSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -19,11 +24,12 @@ public class CheckFireDamperSkill : ISkill
             return SkillResult.Fail("Revit API not available.");
 
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
-            var accessories = new FilteredElementCollector(document)
+            var accessories = ViewScopeHelper.CreateCollector(document, scope)
                 .OfCategory(BuiltInCategory.OST_DuctAccessory)
                 .WhereElementIsNotElementType()
                 .ToList();

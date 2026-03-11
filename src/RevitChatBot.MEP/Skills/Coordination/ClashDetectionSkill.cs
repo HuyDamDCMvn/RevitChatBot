@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Coordination;
 
@@ -18,6 +19,10 @@ namespace RevitChatBot.MEP.Skills.Coordination;
 [SkillParameter("tolerance_feet", "number",
     "Clash tolerance in feet (default 0.01)",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class ClashDetectionSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -33,12 +38,13 @@ public class ClashDetectionSkill : ISkill
         var tolerance = 0.01;
         if (parameters.TryGetValue("tolerance_feet", out var tol) && tol is not null)
             double.TryParse(tol.ToString(), out tolerance);
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
-            var elementsA = GetElements(document, catA);
-            var elementsB = GetElements(document, catB);
+            var elementsA = GetElements(document, catA, scope);
+            var elementsB = GetElements(document, catB, scope);
 
             var clashes = new List<object>();
 
@@ -79,7 +85,7 @@ public class ClashDetectionSkill : ISkill
         return SkillResult.Ok("Clash detection completed.", result);
     }
 
-    private static List<Element> GetElements(Document doc, string category)
+    private static List<Element> GetElements(Document doc, string category, string scope)
     {
         var bic = category switch
         {
@@ -90,7 +96,10 @@ public class ClashDetectionSkill : ISkill
             _ => BuiltInCategory.OST_GenericModel
         };
 
-        return doc.GetInstances(bic).ToList();
+        return ViewScopeHelper.CreateCollector(doc, scope)
+            .OfCategory(bic)
+            .WhereElementIsNotElementType()
+            .ToList();
     }
 
     private static bool BoundingBoxesOverlap(XYZ minA, XYZ maxA, XYZ minB, XYZ maxB) =>

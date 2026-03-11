@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -29,6 +30,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class ValidateDesignCriteriaSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -44,6 +49,7 @@ public class ValidateDesignCriteriaSkill : ISkill
         var maxAspectRatio = ParseDouble(parameters.GetValueOrDefault("max_duct_aspect_ratio"), 4);
         var maxPipeVel = ParseDouble(parameters.GetValueOrDefault("max_pipe_velocity_ms"), 3);
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -52,12 +58,12 @@ public class ValidateDesignCriteriaSkill : ISkill
 
             if (systemType is "hvac" or "all")
             {
-                criteriaResults.Add(CheckDuctCriteria(document, levelFilter, maxDuctVel, maxAspectRatio));
+                criteriaResults.Add(CheckDuctCriteria(document, scope, levelFilter, maxDuctVel, maxAspectRatio));
             }
 
             if (systemType is "plumbing" or "all")
             {
-                criteriaResults.Add(CheckPipeCriteria(document, levelFilter, maxPipeVel));
+                criteriaResults.Add(CheckPipeCriteria(document, scope, levelFilter, maxPipeVel));
             }
 
             int totalViolations = criteriaResults.Sum(r => ((dynamic)r).violationCount);
@@ -72,10 +78,10 @@ public class ValidateDesignCriteriaSkill : ISkill
         return SkillResult.Ok("Design criteria validation completed.", result);
     }
 
-    private static object CheckDuctCriteria(Document doc, string? levelFilter,
+    private static object CheckDuctCriteria(Document doc, string scope, string? levelFilter,
         double maxVelocity, double maxAspect)
     {
-        var ducts = new FilteredElementCollector(doc)
+        var ducts = ViewScopeHelper.CreateCollector(doc, scope)
             .OfClass(typeof(Duct))
             .WhereElementIsNotElementType()
             .Cast<Duct>()
@@ -132,9 +138,9 @@ public class ValidateDesignCriteriaSkill : ISkill
         };
     }
 
-    private static object CheckPipeCriteria(Document doc, string? levelFilter, double maxVelocity)
+    private static object CheckPipeCriteria(Document doc, string scope, string? levelFilter, double maxVelocity)
     {
-        var pipes = new FilteredElementCollector(doc)
+        var pipes = ViewScopeHelper.CreateCollector(doc, scope)
             .OfClass(typeof(Pipe))
             .WhereElementIsNotElementType()
             .Cast<Pipe>()

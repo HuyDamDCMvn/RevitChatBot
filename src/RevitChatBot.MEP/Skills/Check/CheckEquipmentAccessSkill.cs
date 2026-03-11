@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -20,6 +21,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckEquipmentAccessSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -33,6 +38,7 @@ public class CheckEquipmentAccessSkill : ISkill
         var minFrontMm = ParseDouble(parameters.GetValueOrDefault("min_front_clearance_mm"), 900);
         var minSideMm = ParseDouble(parameters.GetValueOrDefault("min_side_clearance_mm"), 600);
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var minFrontFt = minFrontMm / 304.8;
         var minSideFt = minSideMm / 304.8;
@@ -41,7 +47,7 @@ public class CheckEquipmentAccessSkill : ISkill
         {
             var document = (Document)doc;
 
-            var equipment = new FilteredElementCollector(document)
+            var equipment = ViewScopeHelper.CreateCollector(document, scope)
                 .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
                 .WhereElementIsNotElementType()
                 .ToList();

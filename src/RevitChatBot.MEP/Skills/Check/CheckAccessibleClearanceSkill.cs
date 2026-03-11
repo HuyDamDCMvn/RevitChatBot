@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -21,6 +22,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckAccessibleClearanceSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -34,6 +39,7 @@ public class CheckAccessibleClearanceSkill : ISkill
         var minHeadroomMm = ParseDouble(parameters.GetValueOrDefault("min_headroom_mm"), 2100);
         var minFixtureMm = ParseDouble(parameters.GetValueOrDefault("min_fixture_clearance_mm"), 760);
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var minHeadroomFt = minHeadroomMm / 304.8;
 
@@ -55,7 +61,7 @@ public class CheckAccessibleClearanceSkill : ISkill
             {
                 var levelElevation = level.Elevation;
 
-                var mepOnLevel = new FilteredElementCollector(document)
+                var mepOnLevel = ViewScopeHelper.CreateCollector(document, scope)
                     .WhereElementIsNotElementType()
                     .Where(e =>
                     {
@@ -93,7 +99,7 @@ public class CheckAccessibleClearanceSkill : ISkill
                 }
             }
 
-            var plumbingFixtures = new FilteredElementCollector(document)
+            var plumbingFixtures = ViewScopeHelper.CreateCollector(document, scope)
                 .OfCategory(BuiltInCategory.OST_PlumbingFixtures)
                 .WhereElementIsNotElementType()
                 .ToList();

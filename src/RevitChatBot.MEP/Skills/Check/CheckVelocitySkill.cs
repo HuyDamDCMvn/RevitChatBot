@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -9,6 +10,10 @@ namespace RevitChatBot.MEP.Skills.Check;
     "violations exceeding the maximum allowed velocity. Returns count and details of violations.")]
 [SkillParameter("maxVelocity", "number",
     "Maximum allowed velocity in m/s (default: 8.0)", isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckVelocitySkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -20,11 +25,12 @@ public class CheckVelocitySkill : ISkill
             return SkillResult.Fail("Revit API not available.");
 
         var maxVelocity = ParseDouble(parameters.GetValueOrDefault("maxVelocity"), 8.0);
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
-            var ducts = new FilteredElementCollector(document)
+            var ducts = ViewScopeHelper.CreateCollector(document, scope)
                 .OfClass(typeof(Duct))
                 .WhereElementIsNotElementType()
                 .Cast<Duct>()

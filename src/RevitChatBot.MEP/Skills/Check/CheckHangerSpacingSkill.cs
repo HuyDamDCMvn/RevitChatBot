@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -22,6 +23,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckHangerSpacingSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -35,6 +40,7 @@ public class CheckHangerSpacingSkill : ISkill
         var category = parameters.GetValueOrDefault("category")?.ToString() ?? "all";
         var maxSpacingMm = ParseDouble(parameters.GetValueOrDefault("max_spacing_mm"), 0);
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {

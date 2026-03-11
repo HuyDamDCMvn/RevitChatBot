@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -13,6 +14,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("category", "string",
     "Element category: ducts, pipes (default: ducts)", isRequired: false,
     allowedValues: new[] { "ducts", "pipes" })]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class ComplianceCheckSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -28,18 +33,19 @@ public class ComplianceCheckSkill : ISkill
             return SkillResult.Fail("Parameter 'parameterName' is required.");
 
         var category = parameters.GetValueOrDefault("category")?.ToString() ?? "ducts";
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
             var elements = category switch
             {
-                "pipes" => new FilteredElementCollector(document)
+                "pipes" => ViewScopeHelper.CreateCollector(document, scope)
                     .OfClass(typeof(Pipe))
                     .WhereElementIsNotElementType()
                     .Cast<Element>()
                     .ToList(),
-                _ => new FilteredElementCollector(document)
+                _ => ViewScopeHelper.CreateCollector(document, scope)
                     .OfClass(typeof(Duct))
                     .WhereElementIsNotElementType()
                     .Cast<Element>()

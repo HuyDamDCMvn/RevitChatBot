@@ -4,6 +4,7 @@ using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.DB.Electrical;
 using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Query;
 

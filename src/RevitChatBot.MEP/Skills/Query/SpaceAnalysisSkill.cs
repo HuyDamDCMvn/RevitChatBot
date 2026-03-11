@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Query;
 
@@ -8,6 +9,10 @@ namespace RevitChatBot.MEP.Skills.Query;
 [SkillParameter("level", "string", "Filter by level name (optional)", isRequired: false)]
 [SkillParameter("checkAirflow", "boolean", "Compare design vs actual airflow (default: false)", isRequired: false)]
 [SkillParameter("tolerancePct", "number", "Tolerance percentage for airflow match (default: 10)", isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class SpaceAnalysisSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -21,11 +26,12 @@ public class SpaceAnalysisSkill : ISkill
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
         var checkAirflow = ParseBool(parameters.GetValueOrDefault("checkAirflow"), false);
         var tolerancePct = ParseDouble(parameters.GetValueOrDefault("tolerancePct"), 10);
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
-            var spaces = new FilteredElementCollector(document)
+            var spaces = ViewScopeHelper.CreateCollector(document, scope)
                 .OfCategory(BuiltInCategory.OST_MEPSpaces)
                 .WhereElementIsNotElementType()
                 .Cast<Space>()

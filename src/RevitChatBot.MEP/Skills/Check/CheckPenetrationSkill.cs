@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -20,6 +21,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("check_firestop", "string",
     "Whether to check for firestop families near penetrations. 'true' or 'false'. Default: 'true'.",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckPenetrationSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -33,6 +38,7 @@ public class CheckPenetrationSkill : ISkill
         var category = parameters.GetValueOrDefault("category")?.ToString() ?? "all";
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
         var checkFirestop = parameters.GetValueOrDefault("check_firestop")?.ToString() != "false";
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -71,11 +77,11 @@ public class CheckPenetrationSkill : ISkill
 
             var mepElements = new List<Element>();
             if (category is "duct" or "all")
-                mepElements.AddRange(new FilteredElementCollector(document)
+                mepElements.AddRange(ViewScopeHelper.CreateCollector(document, scope)
                     .OfCategory(BuiltInCategory.OST_DuctCurves)
                     .WhereElementIsNotElementType().ToList());
             if (category is "pipe" or "all")
-                mepElements.AddRange(new FilteredElementCollector(document)
+                mepElements.AddRange(ViewScopeHelper.CreateCollector(document, scope)
                     .OfCategory(BuiltInCategory.OST_PipeCurves)
                     .WhereElementIsNotElementType().ToList());
 

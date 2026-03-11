@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -21,6 +22,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckLabelingSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -34,6 +39,7 @@ public class CheckLabelingSkill : ISkill
         var category = parameters.GetValueOrDefault("category")?.ToString() ?? "all";
         var checkUniqueness = parameters.GetValueOrDefault("check_uniqueness")?.ToString() != "false";
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -41,14 +47,14 @@ public class CheckLabelingSkill : ISkill
             var sections = new List<object>();
 
             if (category is "equipment" or "all")
-                sections.Add(CheckEquipmentLabels(document, levelFilter, checkUniqueness));
+                sections.Add(CheckEquipmentLabels(document, scope, levelFilter, checkUniqueness));
 
             if (category is "duct" or "all")
-                sections.Add(CheckLinearLabels(document, BuiltInCategory.OST_DuctCurves,
+                sections.Add(CheckLinearLabels(document, scope, BuiltInCategory.OST_DuctCurves,
                     "Duct", levelFilter));
 
             if (category is "pipe" or "all")
-                sections.Add(CheckLinearLabels(document, BuiltInCategory.OST_PipeCurves,
+                sections.Add(CheckLinearLabels(document, scope, BuiltInCategory.OST_PipeCurves,
                     "Pipe", levelFilter));
 
             int totalIssues = sections.Sum(s => ((dynamic)s).issueCount);
@@ -64,7 +70,7 @@ public class CheckLabelingSkill : ISkill
         return SkillResult.Ok("Labeling check completed.", result);
     }
 
-    private static object CheckEquipmentLabels(Document doc, string? levelFilter, bool checkUnique)
+    private static object CheckEquipmentLabels(Document doc, string scope, string? levelFilter, bool checkUnique)
     {
         var categories = new[]
         {
@@ -74,7 +80,7 @@ public class CheckLabelingSkill : ISkill
         };
 
         var equipment = categories
-            .SelectMany(cat => new FilteredElementCollector(doc)
+            .SelectMany(cat => ViewScopeHelper.CreateCollector(doc, scope)
                 .OfCategory(cat)
                 .WhereElementIsNotElementType()
                 .ToList())
@@ -142,10 +148,10 @@ public class CheckLabelingSkill : ISkill
         };
     }
 
-    private static object CheckLinearLabels(Document doc, BuiltInCategory bic,
+    private static object CheckLinearLabels(Document doc, string scope, BuiltInCategory bic,
         string label, string? levelFilter)
     {
-        var elements = new FilteredElementCollector(doc)
+        var elements = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(bic)
             .WhereElementIsNotElementType()
             .ToList();

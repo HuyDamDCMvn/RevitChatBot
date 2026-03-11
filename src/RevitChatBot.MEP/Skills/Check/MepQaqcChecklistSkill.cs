@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -35,6 +36,7 @@ public class MepQaqcChecklistSkill : ISkill
         var categoryStr = parameters.GetValueOrDefault("categories")?.ToString() ?? "duct,pipe,equipment,fitting";
         var checkCategories = categoryStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(c => c.ToLower()).ToHashSet();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -44,7 +46,7 @@ public class MepQaqcChecklistSkill : ISkill
 
             if (checkCategories.Contains("duct"))
             {
-                var ductCheck = CheckDucts(document, levelFilter);
+                var ductCheck = CheckDucts(document, scope, levelFilter);
                 checks.Add(ductCheck);
                 totalPass += ductCheck.passCount;
                 totalFail += ductCheck.failCount;
@@ -53,7 +55,7 @@ public class MepQaqcChecklistSkill : ISkill
 
             if (checkCategories.Contains("pipe"))
             {
-                var pipeCheck = CheckPipes(document, levelFilter);
+                var pipeCheck = CheckPipes(document, scope, levelFilter);
                 checks.Add(pipeCheck);
                 totalPass += pipeCheck.passCount;
                 totalFail += pipeCheck.failCount;
@@ -62,7 +64,7 @@ public class MepQaqcChecklistSkill : ISkill
 
             if (checkCategories.Contains("equipment"))
             {
-                var eqCheck = CheckEquipment(document, levelFilter);
+                var eqCheck = CheckEquipment(document, scope, levelFilter);
                 checks.Add(eqCheck);
                 totalPass += eqCheck.passCount;
                 totalFail += eqCheck.failCount;
@@ -71,7 +73,7 @@ public class MepQaqcChecklistSkill : ISkill
 
             if (checkCategories.Contains("fitting"))
             {
-                var fitCheck = CheckFittings(document, levelFilter);
+                var fitCheck = CheckFittings(document, scope, levelFilter);
                 checks.Add(fitCheck);
                 totalPass += fitCheck.passCount;
                 totalFail += fitCheck.failCount;
@@ -94,9 +96,9 @@ public class MepQaqcChecklistSkill : ISkill
         return SkillResult.Ok("MEP QA/QC checklist completed.", result);
     }
 
-    private static dynamic CheckDucts(Document doc, string? levelFilter)
+    private static dynamic CheckDucts(Document doc, string scope, string? levelFilter)
     {
-        var ducts = CollectElements(doc, typeof(Duct), levelFilter);
+        var ducts = CollectElements(doc, scope, typeof(Duct), levelFilter);
 
         int disconnected = 0, noSystem = 0, noSize = 0, noInsulation = 0;
 
@@ -131,9 +133,9 @@ public class MepQaqcChecklistSkill : ISkill
         };
     }
 
-    private static dynamic CheckPipes(Document doc, string? levelFilter)
+    private static dynamic CheckPipes(Document doc, string scope, string? levelFilter)
     {
-        var pipes = CollectElements(doc, typeof(Pipe), levelFilter);
+        var pipes = CollectElements(doc, scope, typeof(Pipe), levelFilter);
 
         int disconnected = 0, noSystem = 0, badSlope = 0, noInsulation = 0;
 
@@ -170,9 +172,9 @@ public class MepQaqcChecklistSkill : ISkill
         };
     }
 
-    private static dynamic CheckEquipment(Document doc, string? levelFilter)
+    private static dynamic CheckEquipment(Document doc, string scope, string? levelFilter)
     {
-        var equipment = new FilteredElementCollector(doc)
+        var equipment = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
             .WhereElementIsNotElementType()
             .ToList();
@@ -212,7 +214,7 @@ public class MepQaqcChecklistSkill : ISkill
         };
     }
 
-    private static dynamic CheckFittings(Document doc, string? levelFilter)
+    private static dynamic CheckFittings(Document doc, string scope, string? levelFilter)
     {
         var categories = new[]
         {
@@ -221,7 +223,7 @@ public class MepQaqcChecklistSkill : ISkill
         };
 
         var fittings = categories
-            .SelectMany(cat => new FilteredElementCollector(doc)
+            .SelectMany(cat => ViewScopeHelper.CreateCollector(doc, scope)
                 .OfCategory(cat)
                 .WhereElementIsNotElementType()
                 .ToList())
@@ -259,9 +261,9 @@ public class MepQaqcChecklistSkill : ISkill
         };
     }
 
-    private static List<Element> CollectElements(Document doc, Type elementClass, string? levelFilter)
+    private static List<Element> CollectElements(Document doc, string scope, Type elementClass, string? levelFilter)
     {
-        var elements = new FilteredElementCollector(doc)
+        var elements = ViewScopeHelper.CreateCollector(doc, scope)
             .OfClass(elementClass)
             .WhereElementIsNotElementType()
             .ToList();

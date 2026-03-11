@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -21,6 +22,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckFireProtectionSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -34,6 +39,7 @@ public class CheckFireProtectionSkill : ISkill
         var checkType = parameters.GetValueOrDefault("check_type")?.ToString() ?? "all";
         var maxCoverageSqm = ParseDouble(parameters.GetValueOrDefault("max_sprinkler_coverage_m2"), 12);
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -41,13 +47,13 @@ public class CheckFireProtectionSkill : ISkill
             var sections = new List<object>();
 
             if (checkType is "dampers" or "all")
-                sections.Add(CheckFireDampers(document, levelFilter));
+                sections.Add(CheckFireDampers(document, scope, levelFilter));
 
             if (checkType is "sprinklers" or "all")
-                sections.Add(CheckSprinklerCoverage(document, levelFilter, maxCoverageSqm));
+                sections.Add(CheckSprinklerCoverage(document, scope, levelFilter, maxCoverageSqm));
 
             if (checkType is "penetrations" or "all")
-                sections.Add(CheckPenetrations(document, levelFilter));
+                sections.Add(CheckPenetrations(document, scope, levelFilter));
 
             var totalIssues = sections.Sum(s => ((dynamic)s).issueCount);
 
@@ -62,9 +68,9 @@ public class CheckFireProtectionSkill : ISkill
         return SkillResult.Ok("Fire protection system check completed.", result);
     }
 
-    private static object CheckFireDampers(Document doc, string? levelFilter)
+    private static object CheckFireDampers(Document doc, string scope, string? levelFilter)
     {
-        var dampers = new FilteredElementCollector(doc)
+        var dampers = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(BuiltInCategory.OST_DuctAccessory)
             .WhereElementIsNotElementType()
             .Where(e =>
@@ -120,9 +126,9 @@ public class CheckFireProtectionSkill : ISkill
         };
     }
 
-    private static object CheckSprinklerCoverage(Document doc, string? levelFilter, double maxSqm)
+    private static object CheckSprinklerCoverage(Document doc, string scope, string? levelFilter, double maxSqm)
     {
-        var sprinklers = new FilteredElementCollector(doc)
+        var sprinklers = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(BuiltInCategory.OST_Sprinklers)
             .WhereElementIsNotElementType()
             .ToList();
@@ -131,7 +137,7 @@ public class CheckFireProtectionSkill : ISkill
             sprinklers = sprinklers.Where(s => GetLevelName(doc, s)
                 .Contains(levelFilter, StringComparison.OrdinalIgnoreCase)).ToList();
 
-        var spaces = new FilteredElementCollector(doc)
+        var spaces = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(BuiltInCategory.OST_MEPSpaces)
             .WhereElementIsNotElementType()
             .ToList();
@@ -188,9 +194,9 @@ public class CheckFireProtectionSkill : ISkill
         };
     }
 
-    private static object CheckPenetrations(Document doc, string? levelFilter)
+    private static object CheckPenetrations(Document doc, string scope, string? levelFilter)
     {
-        var openings = new FilteredElementCollector(doc)
+        var openings = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
             .WhereElementIsNotElementType()
             .Where(e =>

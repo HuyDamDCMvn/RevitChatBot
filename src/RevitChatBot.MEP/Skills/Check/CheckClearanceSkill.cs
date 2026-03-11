@@ -3,6 +3,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
@@ -14,6 +15,10 @@ namespace RevitChatBot.MEP.Skills.Check;
 [SkillParameter("category", "string",
     "Filter: all, ducts, or pipes (default: all)", isRequired: false,
     allowedValues: new[] { "all", "ducts", "pipes" })]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckClearanceSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -27,6 +32,7 @@ public class CheckClearanceSkill : ISkill
         var minHeightM = ParseDouble(parameters.GetValueOrDefault("minHeight"), 2.4);
         var minHeightFt = minHeightM / 0.3048;
         var categoryFilter = parameters.GetValueOrDefault("category")?.ToString() ?? "all";
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -35,7 +41,7 @@ public class CheckClearanceSkill : ISkill
 
             if (categoryFilter is "all" or "ducts")
             {
-                var ducts = new FilteredElementCollector(document)
+                var ducts = ViewScopeHelper.CreateCollector(document, scope)
                     .OfClass(typeof(Duct))
                     .WhereElementIsNotElementType()
                     .Cast<Duct>()
@@ -63,7 +69,7 @@ public class CheckClearanceSkill : ISkill
 
             if (categoryFilter is "all" or "pipes")
             {
-                var pipes = new FilteredElementCollector(document)
+                var pipes = ViewScopeHelper.CreateCollector(document, scope)
                     .OfClass(typeof(Pipe))
                     .WhereElementIsNotElementType()
                     .Cast<Pipe>()

@@ -18,6 +18,10 @@ namespace RevitChatBot.MEP.Skills.Query;
 [SkillParameter("max_results", "integer",
     "Maximum number of results to return (default 20)",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class QueryElementsSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(

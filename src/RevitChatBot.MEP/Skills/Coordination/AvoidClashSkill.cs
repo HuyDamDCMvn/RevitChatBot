@@ -5,6 +5,7 @@ using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Context;
 using RevitChatBot.Core.Skills;
 using RevitChatBot.MEP.Skills.Coordination.Routing;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Coordination;
 
@@ -42,6 +43,10 @@ namespace RevitChatBot.MEP.Skills.Coordination;
     "Set to 'true' to use currently selected elements instead of collecting by category. " +
     "First selected element = shift, rest = stand. Works with same-category clashes.",
     isRequired: false, allowedValues: ["true", "false"])]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class AvoidClashSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -66,6 +71,7 @@ public class AvoidClashSkill : ISkill
         string? elementIdsStr = parameters.GetValueOrDefault("element_ids") as string;
         bool useSelection = string.Equals(
             parameters.GetValueOrDefault("use_selection") as string, "true", StringComparison.OrdinalIgnoreCase);
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var isSameCategory = shiftCat == standCat;
 
@@ -102,8 +108,8 @@ public class AvoidClashSkill : ISkill
             }
             else
             {
-                shiftElements = CollectElements(document, shiftCat, levelName);
-                standElements = CollectElements(document, standCat, levelName);
+                shiftElements = CollectElements(document, shiftCat, levelName, scope);
+                standElements = CollectElements(document, standCat, levelName, scope);
             }
 
             if (shiftElements.Count == 0)
@@ -215,12 +221,12 @@ public class AvoidClashSkill : ISkill
             null);
     }
 
-    private static List<Element> CollectElements(Document doc, string category, string? levelName)
+    private static List<Element> CollectElements(Document doc, string category, string? levelName, string scope)
     {
         var bic = CategoryToBuiltIn(category);
         if (bic is null) return [];
 
-        var collector = new FilteredElementCollector(doc)
+        var collector = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(bic.Value)
             .WhereElementIsNotElementType();
 

@@ -24,6 +24,10 @@ namespace RevitChatBot.MEP.Skills.DataExchange;
 [SkillParameter("file_name", "string",
     "Custom file name without extension. Default: 'RevitExport_{category}'.",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class ExportToCsvSkill : ISkill
 {
     private static readonly Dictionary<string, BuiltInCategory[]> CategoryMap = new(StringComparer.OrdinalIgnoreCase)
@@ -56,6 +60,7 @@ public class ExportToCsvSkill : ISkill
         var paramList = parameters.GetValueOrDefault("parameters")?.ToString();
         var systemFilter = parameters.GetValueOrDefault("system_filter")?.ToString();
         var fileName = parameters.GetValueOrDefault("file_name")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         if (!CategoryMap.TryGetValue(category, out var builtInCats))
             return SkillResult.Fail($"Unknown category '{category}'.");
@@ -74,7 +79,7 @@ public class ExportToCsvSkill : ISkill
             foreach (var bic in builtInCats)
             {
                 elements.AddRange(
-                    new FilteredElementCollector(document)
+                    ViewScopeHelper.CreateCollector(document, scope)
                         .OfCategory(bic)
                         .WhereElementIsNotElementType()
                         .ToList());

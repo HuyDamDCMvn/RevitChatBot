@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Coordination;
 
@@ -18,6 +19,10 @@ namespace RevitChatBot.MEP.Skills.Coordination;
     allowedValues: new[] { "duct", "pipe", "cable_tray", "conduit", "equipment", "structural_column", "structural_beam", "wall" })]
 [SkillParameter("level_name", "string", "Filter clashes by level (optional)", isRequired: false)]
 [SkillParameter("tolerance_mm", "number", "Clash tolerance in millimeters (default: 10)", isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to limit to elements visible in the current view, " +
+    "'entire_model' to include all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class AdvancedClashDetectionSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -33,12 +38,13 @@ public class AdvancedClashDetectionSkill : ISkill
         var levelName = parameters.GetValueOrDefault("level_name")?.ToString();
         var toleranceMm = ParseDouble(parameters.GetValueOrDefault("tolerance_mm"), 10);
         var toleranceFt = toleranceMm / 304.8;
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
-            var elementsA = GetElements(document, catA);
-            var elementsB = GetElements(document, catB);
+            var elementsA = GetElements(document, catA, scope);
+            var elementsB = GetElements(document, catB, scope);
 
             if (levelName is not null)
             {
@@ -106,7 +112,7 @@ public class AdvancedClashDetectionSkill : ISkill
         return SkillResult.Ok("Advanced clash detection completed.", result);
     }
 
-    private static List<Element> GetElements(Document doc, string category)
+    private static List<Element> GetElements(Document doc, string category, string scope)
     {
         var bic = category switch
         {
@@ -121,7 +127,7 @@ public class AdvancedClashDetectionSkill : ISkill
             _ => BuiltInCategory.OST_GenericModel
         };
 
-        return new FilteredElementCollector(doc)
+        return ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(bic)
             .WhereElementIsNotElementType()
             .ToList();

@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using RevitChatBot.Core.Skills;
+using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Coordination;
 
@@ -20,6 +21,10 @@ namespace RevitChatBot.MEP.Skills.Coordination;
 [SkillParameter("level", "string",
     "Filter by level name (optional).",
     isRequired: false)]
+[SkillParameter("scope", "string",
+    "Scope: 'active_view' to check only elements visible in the current view, " +
+    "'entire_model' to check all (default: entire_model)",
+    isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class CheckMultiDisciplineSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -33,6 +38,7 @@ public class CheckMultiDisciplineSkill : ISkill
         var disciplines = parameters.GetValueOrDefault("disciplines")?.ToString() ?? "hvac,plumbing,electrical";
         var toleranceMm = ParseDouble(parameters.GetValueOrDefault("tolerance_mm"), 25);
         var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
 
         var toleranceFt = toleranceMm / 304.8;
         var checkSet = disciplines.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -51,7 +57,7 @@ public class CheckMultiDisciplineSkill : ISkill
                 var hvacCats = new[] { BuiltInCategory.OST_DuctCurves, BuiltInCategory.OST_DuctFitting,
                     BuiltInCategory.OST_MechanicalEquipment };
                 foreach (var cat in hvacCats)
-                    hvacElements.AddRange(CollectWithBB(document, cat, levelFilter));
+                    hvacElements.AddRange(CollectWithBB(document, scope, cat, levelFilter));
             }
 
             if (checkSet.Contains("plumbing"))
@@ -59,7 +65,7 @@ public class CheckMultiDisciplineSkill : ISkill
                 var plumbCats = new[] { BuiltInCategory.OST_PipeCurves, BuiltInCategory.OST_PipeFitting,
                     BuiltInCategory.OST_PlumbingFixtures };
                 foreach (var cat in plumbCats)
-                    plumbingElements.AddRange(CollectWithBB(document, cat, levelFilter));
+                    plumbingElements.AddRange(CollectWithBB(document, scope, cat, levelFilter));
             }
 
             if (checkSet.Contains("electrical"))
@@ -67,7 +73,7 @@ public class CheckMultiDisciplineSkill : ISkill
                 var elecCats = new[] { BuiltInCategory.OST_Conduit, BuiltInCategory.OST_CableTray,
                     BuiltInCategory.OST_ElectricalEquipment };
                 foreach (var cat in elecCats)
-                    electricalElements.AddRange(CollectWithBB(document, cat, levelFilter));
+                    electricalElements.AddRange(CollectWithBB(document, scope, cat, levelFilter));
             }
 
             var clashes = new List<object>();
@@ -99,9 +105,9 @@ public class CheckMultiDisciplineSkill : ISkill
     }
 
     private static List<(Element Elem, BoundingBoxXYZ BB)> CollectWithBB(
-        Document doc, BuiltInCategory bic, string? levelFilter)
+        Document doc, string scope, BuiltInCategory bic, string? levelFilter)
     {
-        var elements = new FilteredElementCollector(doc)
+        var elements = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(bic)
             .WhereElementIsNotElementType()
             .ToList();
