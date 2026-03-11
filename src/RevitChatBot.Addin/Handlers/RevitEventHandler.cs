@@ -5,16 +5,16 @@ namespace RevitChatBot.Addin.Handlers;
 
 /// <summary>
 /// Bridges async code to Revit's main thread via IExternalEventHandler.
-/// Revit API calls must run on the main thread; this handler queues
-/// work items and executes them when Revit raises the external event.
+/// Uses a SemaphoreSlim to serialize calls - only one action can be pending at a time.
 /// </summary>
 public class RevitEventHandler : IExternalEventHandler
 {
     private ExternalEvent? _externalEvent;
     private Func<Document, object?>? _pendingAction;
     private TaskCompletionSource<object?>? _tcs;
+    private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public void Register(UIApplication uiApp)
+    public void CreateExternalEvent()
     {
         _externalEvent = ExternalEvent.Create(this);
     }
@@ -25,16 +25,26 @@ public class RevitEventHandler : IExternalEventHandler
         _externalEvent = null;
     }
 
-    public Task<object?> ExecuteAsync(Func<Document, object?> action)
+    public async Task<object?> ExecuteAsync(Func<Document, object?> action)
     {
         if (_externalEvent is null)
             throw new InvalidOperationException("Handler not registered.");
 
-        _tcs = new TaskCompletionSource<object?>();
-        _pendingAction = action;
-        _externalEvent.Raise();
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var tcs = new TaskCompletionSource<object?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _tcs = tcs;
+            _pendingAction = action;
+            _externalEvent.Raise();
 
-        return _tcs.Task;
+            return await tcs.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     public void Execute(UIApplication app)
@@ -51,16 +61,16 @@ public class RevitEventHandler : IExternalEventHandler
             var doc = app.ActiveUIDocument?.Document;
             if (doc is null)
             {
-                tcs.SetException(new InvalidOperationException("No active document."));
+                tcs.TrySetException(new InvalidOperationException("No active document."));
                 return;
             }
 
             var result = action(doc);
-            tcs.SetResult(result);
+            tcs.TrySetResult(result);
         }
         catch (Exception ex)
         {
-            tcs.SetException(ex);
+            tcs.TrySetException(ex);
         }
     }
 

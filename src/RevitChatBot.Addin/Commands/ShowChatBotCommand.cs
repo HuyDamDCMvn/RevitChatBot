@@ -19,6 +19,13 @@ public class ShowChatBotCommand : IExternalCommand
         try
         {
             var uiApp = commandData.Application;
+            var eventHandler = App.Instance?.EventHandler;
+
+            if (eventHandler is null)
+            {
+                message = "RevitChatBot not initialized.";
+                return Result.Failed;
+            }
 
             if (_window is { IsLoaded: true })
             {
@@ -26,7 +33,7 @@ public class ShowChatBotCommand : IExternalCommand
                 return Result.Succeeded;
             }
 
-            _window = new ChatBotWindow(uiApp);
+            _window = new ChatBotWindow(uiApp, eventHandler);
             _window.Show();
 
             return Result.Succeeded;

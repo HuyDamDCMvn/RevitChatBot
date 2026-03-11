@@ -22,9 +22,9 @@ public class WebViewBridge : IDisposable
 {
     private readonly WebView2 _webView;
     private readonly UIApplication _uiApp;
+    private readonly RevitEventHandler _eventHandler;
     private ChatSessionV2? _chatSession;
     private OllamaService? _ollamaService;
-    private RevitEventHandler? _eventHandler;
     private RevitContextEventHooks? _contextEventHooks;
     private RevitContextCache _contextCache = new();
     private KnowledgeManager? _knowledgeManager;
@@ -51,17 +51,15 @@ public class WebViewBridge : IDisposable
     private SkillSuccessFeedback? _skillFeedback;
     private PromptCache? _promptCache;
 
-    public WebViewBridge(WebView2 webView, UIApplication uiApp)
+    public WebViewBridge(WebView2 webView, UIApplication uiApp, RevitEventHandler eventHandler)
     {
         _webView = webView;
         _uiApp = uiApp;
+        _eventHandler = eventHandler;
     }
 
     public void Initialize()
     {
-        _eventHandler = new RevitEventHandler();
-        _eventHandler.Register(_uiApp);
-
         _contextCache = new RevitContextCache();
         _contextEventHooks = new RevitContextEventHooks(_uiApp, _contextCache);
         _contextEventHooks.Subscribe();
@@ -167,7 +165,7 @@ public class WebViewBridge : IDisposable
         {
             try
             {
-                var result = await _eventHandler!.ExecuteAsync(doc =>
+                var result = await _eventHandler.ExecuteAsync(doc =>
                 {
                     var warnings = doc.GetWarnings();
                     return new WarningsCaptureResult
@@ -781,7 +779,6 @@ public class WebViewBridge : IDisposable
 
         _contextEventHooks?.Dispose();
         _agentLogger?.Dispose();
-        _eventHandler?.Unregister();
         if (_webView.CoreWebView2 is not null)
             _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
         GC.SuppressFinalize(this);

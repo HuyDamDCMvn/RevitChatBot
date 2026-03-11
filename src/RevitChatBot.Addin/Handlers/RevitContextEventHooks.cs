@@ -81,9 +81,9 @@ public class RevitContextEventHooks : IDisposable
         {
             _cache.LastDocumentChange = new DocumentChangeDigest
             {
-                ModifiedIds = e.GetModifiedElementIds().Select(id => id.IntegerValue).ToList(),
-                AddedIds = e.GetAddedElementIds().Select(id => id.IntegerValue).ToList(),
-                DeletedIds = e.GetDeletedElementIds().Select(id => id.IntegerValue).ToList()
+                ModifiedIds = e.GetModifiedElementIds().Select(id => id.Value).ToList(),
+                AddedIds = e.GetAddedElementIds().Select(id => id.Value).ToList(),
+                DeletedIds = e.GetDeletedElementIds().Select(id => id.Value).ToList()
             };
             _cache.LastDocumentChangeUtc = DateTime.UtcNow;
             _cache.NotifyChanged();
@@ -96,7 +96,7 @@ public class RevitContextEventHooks : IDisposable
         if (view is null) return;
         _cache.CurrentView = new ViewSnapshot
         {
-            ViewId = view.Id.IntegerValue,
+            ViewId = view.Id.Value,
             ViewName = view.Name,
             ViewType = view.ViewType.ToString(),
             LevelName = view.GenLevel?.Name,
@@ -113,7 +113,7 @@ public class RevitContextEventHooks : IDisposable
 
             _cache.CurrentSelection = new SelectionSnapshot
             {
-                ElementIds = selectedIds.Select(id => id.IntegerValue).ToList(),
+                ElementIds = selectedIds.Select(id => id.Value).ToList(),
                 Count = selectedIds.Count,
                 Categories = selectedIds
                     .Select(id => doc.GetElement(id)?.Category?.Name)

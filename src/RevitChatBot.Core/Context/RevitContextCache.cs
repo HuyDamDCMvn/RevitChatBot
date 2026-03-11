@@ -32,7 +32,7 @@ public class RevitContextCache
 
 public class ViewSnapshot
 {
-    public int ViewId { get; set; }
+    public long ViewId { get; set; }
     public string ViewName { get; set; } = string.Empty;
     public string ViewType { get; set; } = string.Empty;
     public string? LevelName { get; set; }
@@ -43,16 +43,16 @@ public class ViewSnapshot
 
 public class SelectionSnapshot
 {
-    public List<int> ElementIds { get; set; } = [];
+    public List<long> ElementIds { get; set; } = [];
     public List<string> Categories { get; set; } = [];
     public int Count { get; set; }
 }
 
 public class DocumentChangeDigest
 {
-    public List<int> ModifiedIds { get; set; } = [];
-    public List<int> AddedIds { get; set; } = [];
-    public List<int> DeletedIds { get; set; } = [];
+    public List<long> ModifiedIds { get; set; } = [];
+    public List<long> AddedIds { get; set; } = [];
+    public List<long> DeletedIds { get; set; } = [];
     public int TotalChanges => ModifiedIds.Count + AddedIds.Count + DeletedIds.Count;
 }
 
