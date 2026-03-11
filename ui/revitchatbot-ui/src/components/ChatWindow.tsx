@@ -6,7 +6,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { SkillPanel } from './SkillPanel';
 
 export function ChatWindow() {
-  const { messages, isLoading, isConnected, activeSkill, sendMessage, clearMessages } =
+  const { messages, isLoading, isConnected, activeSkill, thinkingText, sendMessage, clearMessages } =
     useRevitBridge();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -16,7 +16,7 @@ export function ChatWindow() {
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth',
     });
-  }, [messages, activeSkill]);
+  }, [messages, activeSkill, thinkingText]);
 
   return (
     <div className="flex h-screen flex-col bg-white">
@@ -73,7 +73,19 @@ export function ChatWindow() {
 
         {activeSkill && <SkillPanel skill={activeSkill} />}
 
-        {isLoading && !activeSkill && !messages.some((m) => m.streaming) && (
+        {thinkingText && (
+          <div className="flex justify-start mb-3">
+            <div className="max-w-[85%] rounded-2xl rounded-bl-md bg-purple-50 border border-purple-100 px-4 py-2.5 text-sm text-purple-700">
+              <div className="flex items-center gap-2">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-purple-400" />
+                <span className="font-medium text-xs text-purple-500">Thinking</span>
+              </div>
+              <p className="mt-1 text-xs text-purple-600 line-clamp-3 whitespace-pre-wrap">{thinkingText}</p>
+            </div>
+          </div>
+        )}
+
+        {isLoading && !activeSkill && !thinkingText && !messages.some((m) => m.streaming) && (
           <div className="flex justify-start mb-3">
             <div className="rounded-2xl rounded-bl-md bg-gray-100 px-4 py-3">
               <div className="flex gap-1">

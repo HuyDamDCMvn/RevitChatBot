@@ -111,6 +111,9 @@ public class WebViewBridge : IDisposable
         InitializeLearningCortex();
         RegisterVisualization(skillRegistry, contextManager);
 
+        if (_vizManager is not null)
+            skillContext.VisualizationManager = _vizManager;
+
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
         InitializeSelfTraining(skillRegistry, skillExecutor);
 

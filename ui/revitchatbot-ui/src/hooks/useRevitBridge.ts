@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge } from '../services/bridge';
-import { ChatMessage, MessageTypes, SkillInfo } from '../types/messages';
+import { ActionPlanData, ChatMessage, MessageTypes, SkillInfo } from '../types/messages';
 
 let nextId = 1;
 const genId = () => `msg-${nextId++}`;
@@ -9,6 +9,7 @@ export function useRevitBridge() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeSkill, setActiveSkill] = useState<SkillInfo | null>(null);
+  const [thinkingText, setThinkingText] = useState<string | null>(null);
   const isConnected = bridge.isConnected;
   const pendingSkillRef = useRef<string | null>(null);
   const streamIdRef = useRef<string | null>(null);
@@ -18,6 +19,7 @@ export function useRevitBridge() {
       switch (msg.type) {
         case MessageTypes.STREAM_CHUNK: {
           const chunk = msg.content ?? '';
+          setThinkingText(null);
           if (!streamIdRef.current) {
             const id = genId();
             streamIdRef.current = id;
@@ -35,6 +37,7 @@ export function useRevitBridge() {
         }
 
         case MessageTypes.STREAM_END: {
+          setThinkingText(null);
           if (streamIdRef.current) {
             const sid = streamIdRef.current;
             const finalContent = msg.content ?? '';
@@ -54,6 +57,7 @@ export function useRevitBridge() {
         }
 
         case MessageTypes.ASSISTANT_MESSAGE:
+          setThinkingText(null);
           setMessages((prev) => [
             ...prev,
             {
@@ -67,7 +71,68 @@ export function useRevitBridge() {
           setActiveSkill(null);
           break;
 
+        case MessageTypes.AGENT_THINKING:
+          setThinkingText(msg.content ?? 'Thinking...');
+          break;
+
+        case MessageTypes.AGENT_STEP: {
+          const stepData = msg.data as { stepType?: string; skillName?: string } | undefined;
+          if (stepData?.stepType === 'Answer') {
+            setThinkingText(null);
+          }
+          break;
+        }
+
+        case MessageTypes.CLARIFICATION_REQUEST: {
+          const clarData = msg.data as { options?: string[]; reason?: string } | undefined;
+          setThinkingText(null);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: genId(),
+              role: 'system',
+              content: msg.content ?? '',
+              timestamp: Date.now(),
+              variant: 'clarification',
+              clarificationOptions: clarData?.options,
+            },
+          ]);
+          break;
+        }
+
+        case MessageTypes.ACTION_PLAN_REVIEW: {
+          const planData = msg.data as ActionPlanData | undefined;
+          setThinkingText(null);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: genId(),
+              role: 'system',
+              content: msg.content ?? 'Action plan pending review',
+              timestamp: Date.now(),
+              variant: 'action_plan',
+              actionPlan: planData,
+            },
+          ]);
+          break;
+        }
+
+        case MessageTypes.CONFIRMATION_REQUIRED:
+          setThinkingText(null);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: genId(),
+              role: 'system',
+              content: msg.content ?? 'Confirmation required',
+              timestamp: Date.now(),
+              variant: 'confirmation',
+            },
+          ]);
+          break;
+
         case MessageTypes.SKILL_EXECUTING:
+          setThinkingText(null);
           pendingSkillRef.current = msg.content ?? '';
           setActiveSkill({
             name: msg.content ?? '',
@@ -90,6 +155,7 @@ export function useRevitBridge() {
         }
 
         case MessageTypes.ERROR:
+          setThinkingText(null);
           if (streamIdRef.current) streamIdRef.current = null;
           setMessages((prev) => [
             ...prev,
@@ -132,6 +198,7 @@ export function useRevitBridge() {
   const clearMessages = useCallback(() => {
     setMessages([]);
     setActiveSkill(null);
+    setThinkingText(null);
     setIsLoading(false);
   }, []);
 
@@ -140,6 +207,7 @@ export function useRevitBridge() {
     isLoading,
     isConnected,
     activeSkill,
+    thinkingText,
     sendMessage,
     clearMessages,
   };

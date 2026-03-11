@@ -12,6 +12,9 @@ export interface ChatMessage {
   thinking?: string;
   skillInfo?: SkillInfo;
   streaming?: boolean;
+  variant?: 'thinking' | 'clarification' | 'action_plan' | 'confirmation';
+  clarificationOptions?: string[];
+  actionPlan?: ActionPlanData;
 }
 
 export interface SkillInfo {
