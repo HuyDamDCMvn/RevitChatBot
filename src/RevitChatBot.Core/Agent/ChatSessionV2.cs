@@ -148,7 +148,9 @@ public class ChatSessionV2
             {
                 var plan = await _agent.ExecuteAsync(userMessage, cancellationToken);
                 LastPlan = plan;
-                result = plan.FinalAnswer ?? "No response generated.";
+                result = string.IsNullOrWhiteSpace(plan.FinalAnswer)
+                    ? "No response generated."
+                    : plan.FinalAnswer;
             }
             finally
             {
