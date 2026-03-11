@@ -213,7 +213,6 @@ sequenceDiagram
             end
         else No tool_calls
             Note over A: ANSWER: Final response
-            break
         end
     end
 
