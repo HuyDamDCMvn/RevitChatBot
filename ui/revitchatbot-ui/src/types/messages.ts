@@ -11,6 +11,7 @@ export interface ChatMessage {
   timestamp: number;
   thinking?: string;
   skillInfo?: SkillInfo;
+  streaming?: boolean;
 }
 
 export interface SkillInfo {

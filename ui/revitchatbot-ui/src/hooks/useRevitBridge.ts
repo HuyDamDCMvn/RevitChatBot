@@ -11,10 +11,48 @@ export function useRevitBridge() {
   const [activeSkill, setActiveSkill] = useState<SkillInfo | null>(null);
   const isConnected = bridge.isConnected;
   const pendingSkillRef = useRef<string | null>(null);
+  const streamIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = bridge.onMessage((msg) => {
       switch (msg.type) {
+        case MessageTypes.STREAM_CHUNK: {
+          const chunk = msg.content ?? '';
+          if (!streamIdRef.current) {
+            const id = genId();
+            streamIdRef.current = id;
+            setMessages((prev) => [
+              ...prev,
+              { id, role: 'assistant', content: chunk, timestamp: Date.now(), streaming: true },
+            ]);
+          } else {
+            const sid = streamIdRef.current;
+            setMessages((prev) =>
+              prev.map((m) => (m.id === sid ? { ...m, content: m.content + chunk } : m))
+            );
+          }
+          break;
+        }
+
+        case MessageTypes.STREAM_END: {
+          if (streamIdRef.current) {
+            const sid = streamIdRef.current;
+            const finalContent = msg.content ?? '';
+            setMessages((prev) =>
+              prev.map((m) => (m.id === sid ? { ...m, content: finalContent, streaming: false } : m))
+            );
+            streamIdRef.current = null;
+          } else {
+            setMessages((prev) => [
+              ...prev,
+              { id: genId(), role: 'assistant', content: msg.content ?? '', timestamp: Date.now() },
+            ]);
+          }
+          setIsLoading(false);
+          setActiveSkill(null);
+          break;
+        }
+
         case MessageTypes.ASSISTANT_MESSAGE:
           setMessages((prev) => [
             ...prev,
@@ -52,6 +90,7 @@ export function useRevitBridge() {
         }
 
         case MessageTypes.ERROR:
+          if (streamIdRef.current) streamIdRef.current = null;
           setMessages((prev) => [
             ...prev,
             {

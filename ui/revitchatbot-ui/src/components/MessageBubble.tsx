@@ -22,6 +22,9 @@ export function MessageBubble({ message }: Props) {
         ) : (
           <div className="prose prose-sm max-w-none prose-p:my-1 prose-pre:bg-gray-200 prose-pre:text-gray-800 prose-code:text-revit-700">
             <ReactMarkdown>{message.content}</ReactMarkdown>
+            {message.streaming && (
+              <span className="inline-block w-2 h-4 ml-0.5 -mb-0.5 bg-revit-500 animate-pulse rounded-sm" />
+            )}
           </div>
         )}
         <div

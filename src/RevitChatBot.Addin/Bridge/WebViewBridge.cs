@@ -131,6 +131,15 @@ public class WebViewBridge : IDisposable
             });
         };
 
+        _chatSession.OnStreamChunk += chunk =>
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.StreamChunk,
+                Content = chunk
+            });
+        };
+
         _chatSession.OnConfirmationRequired += async description =>
         {
             SendToUI(new BridgeMessage
@@ -579,7 +588,7 @@ public class WebViewBridge : IDisposable
 
             SendToUI(new BridgeMessage
             {
-                Type = BridgeMessageTypes.AssistantMessage,
+                Type = BridgeMessageTypes.StreamEnd,
                 Content = response
             });
         }

@@ -73,7 +73,7 @@ export function ChatWindow() {
 
         {activeSkill && <SkillPanel skill={activeSkill} />}
 
-        {isLoading && !activeSkill && (
+        {isLoading && !activeSkill && !messages.some((m) => m.streaming) && (
           <div className="flex justify-start mb-3">
             <div className="rounded-2xl rounded-bl-md bg-gray-100 px-4 py-3">
               <div className="flex gap-1">
