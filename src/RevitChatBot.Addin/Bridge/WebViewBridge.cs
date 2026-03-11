@@ -461,7 +461,7 @@ public class WebViewBridge : IDisposable
         if (_chatSession is null || _memoryManager is null) return;
         try
         {
-            var projectTitle = _initData.Document?.Title ?? "default";
+            var projectTitle = _initData.DocumentTitle ?? "default";
             await _chatSession.InitializeMemoryAsync(projectTitle);
 
             var restored = _chatSession.History;

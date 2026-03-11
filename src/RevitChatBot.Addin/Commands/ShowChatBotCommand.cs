@@ -46,6 +46,7 @@ public class ShowChatBotCommand : IExternalCommand
             var initData = new BridgeInitData
             {
                 Document = doc,
+                DocumentTitle = doc?.Title,
                 ContextCache = contextCache,
                 ContextHooks = _contextHooks
             };
@@ -66,6 +67,7 @@ public class ShowChatBotCommand : IExternalCommand
 public class BridgeInitData
 {
     public Document? Document { get; set; }
+    public string? DocumentTitle { get; set; }
     public RevitContextCache ContextCache { get; set; } = new();
     public RevitContextEventHooks? ContextHooks { get; set; }
 }

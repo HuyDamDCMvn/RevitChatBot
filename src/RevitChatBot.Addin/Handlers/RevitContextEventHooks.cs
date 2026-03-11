@@ -50,7 +50,7 @@ public class RevitContextEventHooks : IDisposable
         catch { }
     }
 
-    private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         try
         {
@@ -64,7 +64,7 @@ public class RevitContextEventHooks : IDisposable
         catch { }
     }
 
-    private void OnViewActivated(object sender, ViewActivatedEventArgs e)
+    private void OnViewActivated(object? sender, ViewActivatedEventArgs e)
     {
         try
         {
@@ -75,7 +75,7 @@ public class RevitContextEventHooks : IDisposable
         catch { }
     }
 
-    private void OnDocumentChanged(object sender, DocumentChangedEventArgs e)
+    private void OnDocumentChanged(object? sender, DocumentChangedEventArgs e)
     {
         try
         {
