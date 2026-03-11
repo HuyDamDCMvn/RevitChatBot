@@ -25,6 +25,11 @@ public class RevitContextCache
     /// </summary>
     public bool MemoryConsentGranted { get; set; } = false;
 
+    /// <summary>
+    /// Extensible key-value store for module-specific context (e.g., visualization state).
+    /// </summary>
+    public Dictionary<string, object?> Extra { get; } = new();
+
     public event Action? OnContextChanged;
 
     public void NotifyChanged() => OnContextChanged?.Invoke();

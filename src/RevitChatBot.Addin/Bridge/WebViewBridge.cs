@@ -8,6 +8,7 @@ using RevitChatBot.Addin.Handlers;
 using RevitChatBot.Core.Agent;
 using RevitChatBot.Core.CodeGen;
 using RevitChatBot.Core.Context;
+using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.LLM;
 using RevitChatBot.Core.Memory;
 using RevitChatBot.Core.Models;
@@ -16,6 +17,10 @@ using RevitChatBot.Knowledge.Embeddings;
 using RevitChatBot.Knowledge.Search;
 using RevitChatBot.Knowledge.Synthesis;
 using RevitChatBot.Knowledge.VectorStore;
+using RevitChatBot.Visualization;
+using RevitChatBot.Visualization.Context;
+using RevitChatBot.Visualization.Learning;
+using RevitChatBot.Visualization.Skills;
 
 namespace RevitChatBot.Addin.Bridge;
 
@@ -59,6 +64,11 @@ public class WebViewBridge : IDisposable
     private SelfLearningPersistenceManager? _persistenceManager;
     private SelfTrainingScheduler? _selfTrainingScheduler;
     private KnowledgeSynthesizer? _knowledgeSynthesizer;
+    private LearningCortex? _learningCortex;
+    private FailureRecoveryLearner? _failureRecovery;
+    private VisualizationManager? _vizManager;
+    private VisualFeedbackLearner? _vizLearner;
+    private VisualWorkflowComposer? _vizComposer;
 
     public WebViewBridge(WebView2 webView, RevitEventHandler eventHandler, BridgeInitData initData)
     {
@@ -98,6 +108,8 @@ public class WebViewBridge : IDisposable
         RegisterVisionSkill(skillRegistry);
         InitializeQueryUnderstanding(skillRegistry);
         InitializeLLMIntelligence();
+        InitializeLearningCortex();
+        RegisterVisualization(skillRegistry, contextManager);
 
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
         InitializeSelfTraining(skillRegistry, skillExecutor);
@@ -125,7 +137,9 @@ public class WebViewBridge : IDisposable
             improvementStore: _improvementStore,
             compositeEngine: _compositeEngine,
             persistenceManager: _persistenceManager,
-            selfTrainingScheduler: _selfTrainingScheduler);
+            selfTrainingScheduler: _selfTrainingScheduler,
+            learningCortex: _learningCortex,
+            failureRecovery: _failureRecovery);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -227,12 +241,15 @@ public class WebViewBridge : IDisposable
             });
         };
 
+        WireVisualizationLearning();
+
         _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         _ = InitializeKnowledgeAsync();
         _ = InitializeMemoryAsync();
         _ = InitializeCodeGenModulesAsync();
         _ = InitializeLLMModulesAsync();
         _ = InitializeSelfTrainingModulesAsync();
+        _ = InitializeLearningCortexAsync();
     }
 
     private static void RegisterMEPComponents(
@@ -406,6 +423,98 @@ public class WebViewBridge : IDisposable
         catch { }
     }
 
+    private void InitializeLearningCortex()
+    {
+        try
+        {
+            var addinDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+            var cortexDir = Path.Combine(addinDir, "learning_cortex");
+            Directory.CreateDirectory(cortexDir);
+
+            _learningCortex = new LearningCortex(cortexDir);
+            _failureRecovery = new FailureRecoveryLearner(cortexDir);
+        }
+        catch { }
+    }
+
+    private void RegisterVisualization(SkillRegistry registry, ContextManager contextManager)
+    {
+        try
+        {
+            _vizManager = new VisualizationManager();
+
+            registry.Register(new HighlightElementsSkill(_vizManager));
+            registry.Register(new VisualizeClashSkill(_vizManager));
+            registry.Register(new ClearVisualizationSkill(_vizManager));
+
+            contextManager.Register(new VisualizationContextProvider(_vizManager));
+
+            var addinDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+            var vizDir = Path.Combine(addinDir, "viz_learning");
+            Directory.CreateDirectory(vizDir);
+
+            _vizLearner = new VisualFeedbackLearner(vizDir);
+            _vizComposer = new VisualWorkflowComposer(_vizLearner, vizDir);
+        }
+        catch { }
+    }
+
+    private void WireVisualizationLearning()
+    {
+        if (_chatSession is null) return;
+
+        try
+        {
+            if (_vizManager is not null && _initData.Document is not null)
+            {
+                _ = _eventHandler.ExecuteAsync(doc =>
+                {
+                    var uiDoc = new Autodesk.Revit.UI.UIDocument(doc);
+                    _vizManager.Register(doc, uiDoc);
+                    return (object?)null;
+                });
+            }
+
+            if (_vizLearner is not null)
+            {
+                _chatSession.Orchestrator.VisualFeedbackTracker =
+                    (preceding, vizAction, args, success) =>
+                    {
+                        var severity = args?.GetValueOrDefault("severity")?.ToString() ?? "info";
+                        _vizLearner.RecordSkillVisualizationPairing(
+                            preceding, vizAction, severity, 0);
+                    };
+            }
+
+            if (_vizLearner is not null && _vizComposer is not null)
+            {
+                var learnedPatterns =
+                    (_vizLearner.GetLearnedPatternsContext() ?? "") + "\n" +
+                    (_vizComposer.GetVisualWorkflowsContext() ?? "");
+
+                if (!string.IsNullOrWhiteSpace(learnedPatterns))
+                    _contextCache.Extra["visual_learned_patterns"] = learnedPatterns;
+            }
+        }
+        catch { }
+    }
+
+    private async Task InitializeLearningCortexAsync()
+    {
+        try
+        {
+            var tasks = new List<Task>();
+            if (_learningCortex is not null) tasks.Add(_learningCortex.LoadAsync());
+            if (_failureRecovery is not null) tasks.Add(_failureRecovery.LoadAsync());
+            if (_vizLearner is not null) tasks.Add(_vizLearner.LoadAsync());
+            if (_vizComposer is not null) tasks.Add(_vizComposer.LoadAsync());
+            await Task.WhenAll(tasks);
+        }
+        catch { }
+    }
+
     private void InitializeSelfTraining(SkillRegistry skillRegistry, SkillExecutor skillExecutor)
     {
         try
@@ -423,7 +532,9 @@ public class WebViewBridge : IDisposable
                 memory: _memoryManager,
                 planStore: _planReplayStore,
                 interactionRecorder: _interactionRecorder,
-                improvementStore: _improvementStore);
+                improvementStore: _improvementStore,
+                learningCortex: _learningCortex,
+                failureRecovery: _failureRecovery);
 
             var gapAnalyzer = _interactionRecorder != null
                 ? new SkillGapAnalyzer(_ollamaService!, skillRegistry, _interactionRecorder)
@@ -931,6 +1042,7 @@ public class WebViewBridge : IDisposable
         _chatSession?.StopSelfTraining();
         _ = SaveStateAsync();
 
+        _vizManager?.Dispose();
         _selfTrainingScheduler?.Dispose();
         _agentLogger?.Dispose();
         GC.SuppressFinalize(this);

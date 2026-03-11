@@ -1,5 +1,6 @@
 using RevitChatBot.Core.CodeGen;
 using RevitChatBot.Core.Context;
+using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.LLM;
 using RevitChatBot.Core.Memory;
 using RevitChatBot.Core.Models;
@@ -55,9 +56,25 @@ public class AgentOrchestrator
     private readonly ImprovementStore? _improvementStore;
     private readonly CompositeSkillEngine? _compositeEngine;
     private readonly SelfLearningPersistenceManager? _persistenceManager;
+    private readonly LearningCortex? _learningCortex;
+    private readonly FailureRecoveryLearner? _failureRecovery;
 
     private readonly WarningsDeltaTracker _warningsDeltaTracker = new();
     private readonly List<ChatMessage> _history = [];
+
+    private string? _lastNonVizSkillName;
+    private Action<string, string, Dictionary<string, object?>, bool>? _visualFeedbackTracker;
+
+    /// <summary>
+    /// Hook for the VisualFeedbackLearner to track skill→visualization pairings.
+    /// Set by the Addin layer after constructing both the orchestrator and the learner.
+    /// Signature: (precedingSkill, vizAction, vizArgs, wasSuccessful)
+    /// </summary>
+    public Action<string, string, Dictionary<string, object?>, bool>? VisualFeedbackTracker
+    {
+        get => _visualFeedbackTracker;
+        set => _visualFeedbackTracker = value;
+    }
 
     private const int MaxReActSteps = 8;
     private const int MaxRetryOnLowQuality = 1;
@@ -110,7 +127,9 @@ public class AgentOrchestrator
         SelfEvaluator? selfEvaluator = null,
         ImprovementStore? improvementStore = null,
         CompositeSkillEngine? compositeEngine = null,
-        SelfLearningPersistenceManager? persistenceManager = null)
+        SelfLearningPersistenceManager? persistenceManager = null,
+        LearningCortex? learningCortex = null,
+        FailureRecoveryLearner? failureRecovery = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -138,6 +157,8 @@ public class AgentOrchestrator
         _improvementStore = improvementStore;
         _compositeEngine = compositeEngine;
         _persistenceManager = persistenceManager;
+        _learningCortex = learningCortex;
+        _failureRecovery = failureRecovery;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -361,6 +382,26 @@ public class AgentOrchestrator
                     ChatMessage.FromSystem(hints));
         }
 
+        // --- Phase 3.9: Visualization Learning — inject learned visual patterns ---
+        var vizLearnedContext = _contextManager.ContextCache?.Extra
+            ?.GetValueOrDefault("visual_learned_patterns") as string;
+        if (!string.IsNullOrWhiteSpace(vizLearnedContext))
+            messages.Insert(messages.Count - historyForPrompt.Count,
+                ChatMessage.FromSystem(vizLearnedContext));
+
+        // --- Phase 3.10: Learning Cortex — inject cross-module meta-insights ---
+        if (_learningCortex is not null)
+        {
+            try
+            {
+                var cortexContext = _learningCortex.BuildCortexContext(maxTokenBudget: 600);
+                if (!string.IsNullOrWhiteSpace(cortexContext))
+                    messages.Insert(messages.Count - historyForPrompt.Count,
+                        ChatMessage.FromSystem(cortexContext));
+            }
+            catch { /* non-critical */ }
+        }
+
         // --- Phase 4: ReAct Loop ---
         for (int step = 0; step < MaxReActSteps; step++)
         {
@@ -527,7 +568,23 @@ public class AgentOrchestrator
                 _dynamicSkillRegistry?.RecordUsage(toolCall.FunctionName);
 
                 if (result.Success)
+                {
                     _fewShotLearning?.RecordSuccess(effectiveQuery, toolCall.FunctionName, toolCall.Arguments);
+                }
+                else if (_failureRecovery is not null)
+                {
+                    _failureRecovery.RecordFailure(
+                        toolCall.FunctionName, toolCall.Arguments,
+                        result.Message ?? "unknown error");
+
+                    var recoveryAdvice = _failureRecovery.GetRecoveryAdvice(
+                        toolCall.FunctionName, result.Message ?? "");
+                    if (recoveryAdvice is not null)
+                        result.Message += $"\n[Recovery hint: {recoveryAdvice}]";
+                }
+
+                // --- Visual Feedback Learning: track skill→visualization pairings ---
+                TrackVisualizationPairing(toolCall.FunctionName, toolCall.Arguments, result.Success);
 
                 var resultJson = result.ToJson();
                 if (warningsDelta is { Delta: not 0 })
@@ -581,7 +638,30 @@ public class AgentOrchestrator
             if (_selfEvaluator != null && actionStepCount >= SelfEvalMinSteps)
                 _ = SelfEvaluateAsync(plan, analysis, cancellationToken);
 
-            // 5d. Notify persistence manager
+            // 5d. Learning Cortex — fan out to all sub-analyzers
+            try
+            {
+                _learningCortex?.Ingest(plan, analysis, _memory?.Analytics);
+            }
+            catch { /* non-critical */ }
+
+            // 5e. Learning Cortex — run analysis cycle (non-blocking)
+            if (_learningCortex is not null)
+            {
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        _learningCortex.Analyze(
+                            _interactionRecorder, _planReplayStore,
+                            _improvementStore, _memory?.Analytics,
+                            _fewShotLearning, _patternLearning);
+                    }
+                    catch { /* non-critical background analysis */ }
+                }, CancellationToken.None);
+            }
+
+            // 5f. Notify persistence manager
             _persistenceManager?.NotifyChange();
         }
 
@@ -780,12 +860,29 @@ public class AgentOrchestrator
             - CHECK [codegen_api_usage] for commonly used patterns and known error-prone patterns.
             - AVOID patterns listed in KNOWN ERROR-PRONE PATTERNS.
 
+            ## 3D VISUALIZATION
+            You can highlight elements directly in the Revit 3D view:
+            - After ANY check/query that returns element IDs, use 'highlight_elements' to show results visually.
+            - Use semantic severity: 'critical' (red) for failures, 'warning' (orange) for issues, 
+              'ok' (green) for passing elements, 'info' (blue) for selection.
+            - For clash detection results, use 'visualize_clashes' with element ID pairs.
+            - Use 'clear_visualization' to clean up before a new analysis.
+            - ALWAYS tag visualizations with the originating skill name for easy cleanup.
+            - Visualization helps users understand spatial issues that text alone cannot convey.
+            
+            WORKFLOW PATTERN — Visual QA/QC:
+            1. Run check skill (e.g., check_clearance) → get element IDs with issues
+            2. Call highlight_elements with those IDs and appropriate severity
+            3. Present text summary + tell user to look at the 3D view
+            4. Before running a new check, clear_visualization for the previous tag
+
             ## RESPONSE FORMAT
             - Use tables for listing issues (Element ID | Issue | Severity)
             - Group results by system or level
             - Provide actionable recommendations, not just problem descriptions
             - Include both metric and imperial units when presenting measurements
             - For destructive actions, explain what you will do first
+            - When visualization is active, mention it: "I've highlighted X elements in the 3D view"
             """;
 
         var staticContent = _promptCache != null && _promptCache.IsInitialized
@@ -849,6 +946,34 @@ public class AgentOrchestrator
                 .OfType<string>()
                 .Count(v => v.All(char.IsDigit))
         };
+    }
+
+    private static readonly HashSet<string> VisualizationSkills =
+    [
+        "highlight_elements",
+        "visualize_clashes",
+        "clear_visualization"
+    ];
+
+    private void TrackVisualizationPairing(
+        string skillName, Dictionary<string, object?> args, bool success)
+    {
+        if (VisualizationSkills.Contains(skillName))
+        {
+            if (_lastNonVizSkillName is not null && success)
+            {
+                try
+                {
+                    _visualFeedbackTracker?.Invoke(
+                        _lastNonVizSkillName, skillName, args, success);
+                }
+                catch { /* non-critical */ }
+            }
+        }
+        else
+        {
+            _lastNonVizSkillName = skillName;
+        }
     }
 
     public void ClearHistory() => _history.Clear();

@@ -1,5 +1,6 @@
 using RevitChatBot.Core.CodeGen;
 using RevitChatBot.Core.Context;
+using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.LLM;
 using RevitChatBot.Core.Memory;
 using RevitChatBot.Core.Models;
@@ -63,7 +64,9 @@ public class ChatSessionV2
         ImprovementStore? improvementStore = null,
         CompositeSkillEngine? compositeEngine = null,
         SelfLearningPersistenceManager? persistenceManager = null,
-        SelfTrainingScheduler? selfTrainingScheduler = null)
+        SelfTrainingScheduler? selfTrainingScheduler = null,
+        LearningCortex? learningCortex = null,
+        FailureRecoveryLearner? failureRecovery = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
@@ -80,10 +83,16 @@ public class ChatSessionV2
             fewShotLearning, dynamicGlossary, skillFeedback, promptCache,
             agentLogger,
             planReplayStore, interactionRecorder, selfEvaluator,
-            improvementStore, compositeEngine, persistenceManager);
+            improvementStore, compositeEngine, persistenceManager,
+            learningCortex, failureRecovery);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }
+
+    /// <summary>
+    /// Access to the underlying orchestrator for advanced wiring (e.g., VisualFeedbackTracker).
+    /// </summary>
+    public AgentOrchestrator Orchestrator => _agent;
 
     /// <summary>
     /// Initialize memory and restore previous conversation if available.

@@ -1,4 +1,5 @@
 using RevitChatBot.Core.CodeGen;
+using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.LLM;
 using RevitChatBot.Core.Memory;
 
@@ -19,6 +20,8 @@ public class SelfLearningPersistenceManager
     private readonly PlanReplayStore? _planStore;
     private readonly InteractionRecorder? _interactionRecorder;
     private readonly ImprovementStore? _improvementStore;
+    private readonly LearningCortex? _learningCortex;
+    private readonly FailureRecoveryLearner? _failureRecovery;
 
     private int _changesSinceLastPersist;
     private const int PersistThreshold = 3;
@@ -33,7 +36,9 @@ public class SelfLearningPersistenceManager
         MemoryManager? memory = null,
         PlanReplayStore? planStore = null,
         InteractionRecorder? interactionRecorder = null,
-        ImprovementStore? improvementStore = null)
+        ImprovementStore? improvementStore = null,
+        LearningCortex? learningCortex = null,
+        FailureRecoveryLearner? failureRecovery = null)
     {
         _patternLearning = patternLearning;
         _dynamicSkills = dynamicSkills;
@@ -44,6 +49,8 @@ public class SelfLearningPersistenceManager
         _planStore = planStore;
         _interactionRecorder = interactionRecorder;
         _improvementStore = improvementStore;
+        _learningCortex = learningCortex;
+        _failureRecovery = failureRecovery;
     }
 
     /// <summary>
@@ -76,6 +83,8 @@ public class SelfLearningPersistenceManager
             if (_planStore != null) tasks.Add(_planStore.SaveAsync(ct));
             if (_interactionRecorder != null) tasks.Add(_interactionRecorder.SaveAsync(ct));
             if (_improvementStore != null) tasks.Add(_improvementStore.SaveAsync(ct));
+            if (_learningCortex != null) tasks.Add(_learningCortex.SaveAsync(ct));
+            if (_failureRecovery != null) tasks.Add(_failureRecovery.SaveAsync(ct));
 
             await Task.WhenAll(tasks);
         }
@@ -101,6 +110,8 @@ public class SelfLearningPersistenceManager
         if (_planStore != null) tasks.Add(_planStore.LoadAsync(ct));
         if (_interactionRecorder != null) tasks.Add(_interactionRecorder.LoadAsync(ct));
         if (_improvementStore != null) tasks.Add(_improvementStore.LoadAsync(ct));
+        if (_learningCortex != null) tasks.Add(_learningCortex.LoadAsync(ct));
+        if (_failureRecovery != null) tasks.Add(_failureRecovery.LoadAsync(ct));
 
         await Task.WhenAll(tasks);
     }

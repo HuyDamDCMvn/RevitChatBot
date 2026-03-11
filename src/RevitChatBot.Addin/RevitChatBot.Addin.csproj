@@ -29,6 +29,7 @@
     <ProjectReference Include="..\RevitChatBot.MEP\RevitChatBot.MEP.csproj" />
     <ProjectReference Include="..\RevitChatBot.Knowledge\RevitChatBot.Knowledge.csproj" />
     <ProjectReference Include="..\RevitChatBot.RevitServices\RevitChatBot.RevitServices.csproj" />
+    <ProjectReference Include="..\RevitChatBot.Visualization\RevitChatBot.Visualization.csproj" />
   </ItemGroup>
 
   <!-- Copy React UI build output to bin/ui/ alongside the DLL -->
