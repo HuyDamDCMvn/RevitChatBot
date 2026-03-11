@@ -1,6 +1,7 @@
 using System.Text;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
+using Nice3point.Revit.Extensions;
 using Autodesk.Revit.DB.Plumbing;
 using RevitChatBot.Core.Context;
 
@@ -64,10 +65,7 @@ public class ModelInventoryProvider : IContextProvider
         sb.AppendLine("MODEL INVENTORY - MEP Element Counts:");
         foreach (var (label, cat) in MepCategories)
         {
-            int count = new FilteredElementCollector(doc)
-                .OfCategory(cat)
-                .WhereElementIsNotElementType()
-                .GetElementCount();
+            int count = doc.GetInstances(cat).Count;
             if (count > 0)
                 sb.AppendLine($"  {label}: {count}");
         }
@@ -145,8 +143,7 @@ public class ModelInventoryProvider : IContextProvider
 
     private static void AppendLevels(Document doc, StringBuilder sb)
     {
-        var levels = new FilteredElementCollector(doc)
-            .OfClass(typeof(Level)).Cast<Level>()
+        var levels = doc.EnumerateInstances<Level>()
             .OrderBy(l => l.Elevation)
             .Select(l => $"\"{l.Name}\" (elev={Math.Round(l.Elevation * 0.3048, 2)}m)")
             .Take(20).ToList();
@@ -157,14 +154,8 @@ public class ModelInventoryProvider : IContextProvider
 
     private static void AppendSampleParameters(Document doc, StringBuilder sb)
     {
-        var sample = new FilteredElementCollector(doc)
-            .OfCategory(BuiltInCategory.OST_DuctCurves)
-            .WhereElementIsNotElementType()
-            .FirstOrDefault()
-            ?? new FilteredElementCollector(doc)
-                .OfCategory(BuiltInCategory.OST_PipeCurves)
-                .WhereElementIsNotElementType()
-                .FirstOrDefault();
+        var sample = doc.GetInstances(BuiltInCategory.OST_DuctCurves).FirstOrDefault()
+            ?? doc.GetInstances(BuiltInCategory.OST_PipeCurves).FirstOrDefault();
 
         if (sample is null) return;
 

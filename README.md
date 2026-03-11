@@ -12,7 +12,7 @@ graph TB
             WPF[WPF Window]
             WV2[WebView2 Control]
             Bridge[WebViewBridge]
-            EEH[ExternalEventHandler]
+            EEH[AsyncEventHandler<br/>Nice3point Toolkit]
         end
     end
 
@@ -406,7 +406,7 @@ flowchart TD
 ```mermaid
 graph BT
     Core["RevitChatBot.Core<br/>Agent, LLM, Skills, Context, CodeGen"]
-    Services["RevitChatBot.RevitServices<br/>RevitAPI.dll wrappers"]
+    Services["RevitChatBot.RevitServices<br/>Revit API wrappers + Nice3point Extensions"]
     MEP["RevitChatBot.MEP<br/>9 skill domains (25+ skills) + 8 context providers"]
     Knowledge["RevitChatBot.Knowledge<br/>RAG: Embeddings + VectorStore"]
     Addin["RevitChatBot.Addin<br/>WPF + WebView2 + wiring"]
@@ -466,11 +466,11 @@ RevitChatBot.slnx
 │   │   └── Context/                      # 8 providers (ProjectInfo, ActiveView, Selected, MEPSystem, RoomSpace, SystemDetail, LevelSummary, ModelInventory)
 │   │
 │   └── RevitChatBot.Addin/              # Revit 2025 Add-in entry point
-│       ├── App.cs                        # IExternalApplication + Ribbon
-│       ├── Commands/                     # ShowChatBotCommand
+│       ├── App.cs                        # ExternalApplication (Nice3point Toolkit) + Ribbon
+│       ├── Commands/                     # ShowChatBotCommand (ExternalCommand base)
 │       ├── Views/                        # WPF Window + WebView2
 │       ├── Bridge/                       # WebViewBridge (React <-> C# + Knowledge + Agent)
-│       └── Handlers/                     # ExternalEventHandler
+│       └── Handlers/                     # RevitEventHandler (AsyncEventHandler wrapper)
 │
 ├── ui/revitchatbot-ui/                   # React frontend
 │   └── src/
@@ -496,7 +496,7 @@ RevitChatBot.slnx
 │       ├── revit-api/                    # Revit API notes + Ollama API reference
 │       └── project-specs/                # Project-specific specs
 │
-├── Directory.Build.props                 # Revit API path config
+├── Directory.Build.props                 # RevitVersion + RevitApiPath config
 └── .gitignore
 ```
 
@@ -547,13 +547,16 @@ RevitChatBot.slnx
 
 ## Setup
 
-### 1. Configure Revit API Path
+### 1. Configure Revit Version
 
 Edit `Directory.Build.props` in the root directory:
 
 ```xml
+<RevitVersion>2025</RevitVersion>
 <RevitApiPath>C:\Program Files\Autodesk\Revit 2025</RevitApiPath>
 ```
+
+The `RevitVersion` property is used by Nice3point NuGet packages (`Nice3point.Revit.Api.*`, `Nice3point.Revit.Toolkit`, `Nice3point.Revit.Extensions`) to select the correct Revit API version. The `RevitApiPath` is kept as a fallback for local development.
 
 ### 2. Build the React UI
 
@@ -621,6 +624,9 @@ Open Revit 2025. Find the **MEP ChatBot** button in the **AI** ribbon panel.
     ├── RevitChatBot.MEP.dll
     ├── RevitChatBot.Knowledge.dll
     ├── RevitChatBot.RevitServices.dll
+    ├── RevitChatBot.Visualization.dll
+    ├── Nice3point.Revit.Toolkit.dll      # Revit Toolkit (base classes, async handlers)
+    ├── Nice3point.Revit.Extensions.dll   # Revit Extensions (fluent API)
     ├── Microsoft.CodeAnalysis.*.dll      # Roslyn compiler
     ├── Microsoft.Web.WebView2.*.dll
     ├── UglyToad.PdfPig.*.dll             # PDF loader
@@ -957,6 +963,9 @@ Next user interaction benefits from:
 ## References
 
 - [Revit API 2025.3 Docs](https://www.revitapidocs.com/2025.3/)
+- [Nice3point/RevitToolkit](https://github.com/Nice3point/RevitToolkit) — ExternalApplication/Command, AsyncEventHandler, Context
+- [Nice3point/RevitExtensions](https://github.com/Nice3point/RevitExtensions) — Fluent extensions for elements, parameters, units, ribbon
+- [Nice3point/RevitApi](https://github.com/Nice3point/RevitApi) — NuGet-packaged Revit API references
 - [Ollama GitHub + API Docs](https://github.com/ollama/ollama)
 - [Ollama REST API - /api/generate](https://docs.ollama.com/api/generate) — structured output, thinking mode
 - [WebView2 Documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/)

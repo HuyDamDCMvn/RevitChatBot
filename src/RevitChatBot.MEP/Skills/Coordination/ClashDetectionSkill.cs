@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Coordination;
@@ -89,10 +90,7 @@ public class ClashDetectionSkill : ISkill
             _ => BuiltInCategory.OST_GenericModel
         };
 
-        return new FilteredElementCollector(doc)
-            .OfCategory(bic)
-            .WhereElementIsNotElementType()
-            .ToList();
+        return doc.GetInstances(bic).ToList();
     }
 
     private static bool BoundingBoxesOverlap(XYZ minA, XYZ maxA, XYZ minB, XYZ maxB) =>

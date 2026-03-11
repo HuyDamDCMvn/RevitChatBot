@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Check;
@@ -51,17 +52,12 @@ public class ModelAuditSkill : ISkill
                 .Select(g => new { description = g.Key, count = g.Count() })
                 .ToList();
 
-            var totalElements = new FilteredElementCollector(document)
-                .WhereElementIsNotElementType()
-                .GetElementCount();
+            var totalElements = document.GetElements().WhereElementIsNotElementType().GetElementCount();
 
             var mepCounts = new List<object>();
             foreach (var (label, category) in MepCategories)
             {
-                var count = new FilteredElementCollector(document)
-                    .OfCategory(category)
-                    .WhereElementIsNotElementType()
-                    .GetElementCount();
+                var count = document.GetInstances(category).Count;
                 mepCounts.Add(new { category = label, count });
             }
 

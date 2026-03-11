@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Context;
 
 namespace RevitChatBot.MEP.Context;
@@ -21,9 +22,7 @@ public class LevelSummaryProvider : IContextProvider
             return Task.FromResult(data);
         }
 
-        var levels = new FilteredElementCollector(doc)
-            .OfClass(typeof(Level))
-            .Cast<Level>()
+        var levels = doc.EnumerateInstances<Level>()
             .OrderBy(l => l.Elevation)
             .ToList();
 
@@ -51,11 +50,7 @@ public class LevelSummaryProvider : IContextProvider
             int total = 0;
             foreach (var cat in mepCategories)
             {
-                total += new FilteredElementCollector(doc)
-                    .OfCategory(cat)
-                    .WhereElementIsNotElementType()
-                    .Where(e => e.LevelId == level.Id)
-                    .Count();
+                total += doc.GetInstances(cat).Count(e => e.LevelId == level.Id);
             }
 
             var elev = Math.Round(level.Elevation * 0.3048, 2);

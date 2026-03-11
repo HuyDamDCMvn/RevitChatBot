@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Check;
@@ -107,7 +108,7 @@ public class CheckClearanceSkill : ISkill
         if (levelId is null || levelId == ElementId.InvalidElementId)
             return (-1, "N/A");
 
-        var level = doc.GetElement(levelId) as Level;
+        var level = (levelId ?? ElementId.InvalidElementId).ToElement(doc) as Level;
         if (level is null) return (-1, "N/A");
 
         var loc = curve.Location as LocationCurve;

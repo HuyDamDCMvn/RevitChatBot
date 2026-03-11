@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Check;
@@ -40,10 +41,7 @@ public class CheckConnectionSkill : ISkill
 
             foreach (var (label, category) in MepCategories)
             {
-                var elements = new FilteredElementCollector(document)
-                    .OfCategory(category)
-                    .WhereElementIsNotElementType()
-                    .ToList();
+                var elements = document.GetInstances(category).ToList();
 
                 foreach (var elem in elements)
                 {
@@ -67,7 +65,7 @@ public class CheckConnectionSkill : ISkill
 
                     if (!hasUnconnected) continue;
 
-                    var typeName = document.GetElement(elem.GetTypeId())?.Name ?? "N/A";
+                    var typeName = elem.GetTypeId().ToElement(document)?.Name ?? "N/A";
                     disconnected.Add(new
                     {
                         elementId = elem.Id.Value,

@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Check;
@@ -127,7 +128,7 @@ public class DirectionalClearanceSkill : ISkill
                         if (distFt < thresholdFt)
                         {
                             var hitElemId = hit.GetReference().ElementId;
-                            var hitElem = document.GetElement(hitElemId);
+                            var hitElem = hitElemId.ToElement(document);
                             string hitCat = hitElem?.Category?.Name ?? "Unknown";
 
                             violations.Add(new
@@ -184,10 +185,7 @@ public class DirectionalClearanceSkill : ISkill
         var elements = new List<Element>();
         foreach (var cat in cats)
         {
-            elements.AddRange(new FilteredElementCollector(doc)
-                .OfCategory(cat)
-                .WhereElementIsNotElementType()
-                .ToList());
+            elements.AddRange(doc.GetInstances(cat).ToList());
         }
 
         if (!string.IsNullOrEmpty(levelName))
@@ -197,7 +195,7 @@ public class DirectionalClearanceSkill : ISkill
                 var lvlParam = e.get_Parameter(BuiltInParameter.RBS_START_LEVEL_PARAM);
                 if (lvlParam?.AsElementId() is not { } id || id == ElementId.InvalidElementId)
                     return false;
-                return doc.GetElement(id)?.Name?.Equals(levelName, StringComparison.OrdinalIgnoreCase) == true;
+                return id.ToElement(doc)?.Name?.Equals(levelName, StringComparison.OrdinalIgnoreCase) == true;
             }).ToList();
         }
 
@@ -253,7 +251,7 @@ public class DirectionalClearanceSkill : ISkill
 
     private static string GetFamilyInfo(Document doc, Element elem)
     {
-        if (doc.GetElement(elem.GetTypeId()) is ElementType et)
+        if (elem.GetTypeId().ToElement(doc) is ElementType et)
         {
             if (et is FamilySymbol fs) return $"{fs.FamilyName}: {fs.Name}";
             return et.Name;

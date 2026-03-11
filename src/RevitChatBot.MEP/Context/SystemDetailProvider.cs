@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
+using Nice3point.Revit.Extensions;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.DB.Electrical;
 using RevitChatBot.Core.Context;
@@ -68,10 +69,7 @@ public class SystemDetailProvider : IContextProvider
         {
             lines.Add($"\nElectrical: {elecSystems.Count} circuits");
 
-            var panelCount = new FilteredElementCollector(doc)
-                .OfCategory(BuiltInCategory.OST_ElectricalEquipment)
-                .WhereElementIsNotElementType()
-                .GetElementCount();
+            var panelCount = doc.GetInstances(BuiltInCategory.OST_ElectricalEquipment).Count;
             lines.Add($"  Panels: {panelCount}");
 
             var conduitCount = new FilteredElementCollector(doc)

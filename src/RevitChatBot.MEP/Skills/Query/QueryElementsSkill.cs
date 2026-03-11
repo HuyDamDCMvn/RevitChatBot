@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 using RevitChatBot.RevitServices;
 
@@ -58,9 +59,9 @@ public class QueryElementsSkill : ISkill
                     Name = e.Name,
                     Category = e.Category?.Name ?? "Unknown",
                     Level = (e as Element)?.LevelId is ElementId lid && lid != ElementId.InvalidElementId
-                        ? document.GetElement(lid)?.Name ?? "N/A"
+                        ? lid.ToElement(document)?.Name ?? "N/A"
                         : "N/A",
-                    Type = document.GetElement(e.GetTypeId())?.Name ?? "N/A"
+                    Type = e.GetTypeId().ToElement(document)?.Name ?? "N/A"
                 })
                 .ToList();
 

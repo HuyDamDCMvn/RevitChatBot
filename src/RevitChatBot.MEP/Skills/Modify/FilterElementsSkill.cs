@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Modify;
@@ -168,14 +169,10 @@ public class FilterElementsSkill : ISkill
 
     private static ElementId FindParameterId(Document doc, BuiltInCategory bic, string paramName)
     {
-        using var collector = new FilteredElementCollector(doc);
-        var sample = collector
-            .OfCategory(bic)
-            .WhereElementIsNotElementType()
-            .FirstOrDefault();
+        var sample = doc.GetInstances(bic).FirstOrDefault();
         if (sample is null) return ElementId.InvalidElementId;
 
-        var param = sample.LookupParameter(paramName);
+        var param = sample.FindParameter(paramName);
         if (param is null) return ElementId.InvalidElementId;
 
         if (param.IsShared)

@@ -2,6 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.DB.Electrical;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Query;
@@ -34,14 +35,10 @@ public class SystemOverviewSkill : ISkill
 
             if (discipline is "all" or "mechanical")
             {
-                var mechSystems = new FilteredElementCollector(document)
-                    .OfClass(typeof(MechanicalSystem)).Cast<MechanicalSystem>().ToList();
-                var ducts = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_DuctCurves).WhereElementIsNotElementType().GetElementCount();
-                var ductFittings = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_DuctFitting).WhereElementIsNotElementType().GetElementCount();
-                var mechEquip = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_MechanicalEquipment).WhereElementIsNotElementType().GetElementCount();
+                var mechSystems = document.GetElements().OfClass(typeof(MechanicalSystem)).Cast<MechanicalSystem>().ToList();
+                var ducts = document.GetInstances(BuiltInCategory.OST_DuctCurves).Count;
+                var ductFittings = document.GetInstances(BuiltInCategory.OST_DuctFitting).Count;
+                var mechEquip = document.GetInstances(BuiltInCategory.OST_MechanicalEquipment).Count;
 
                 overview["mechanical"] = new
                 {
@@ -60,14 +57,10 @@ public class SystemOverviewSkill : ISkill
 
             if (discipline is "all" or "plumbing")
             {
-                var pipeSystems = new FilteredElementCollector(document)
-                    .OfClass(typeof(PipingSystem)).Cast<PipingSystem>().ToList();
-                var pipes = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_PipeCurves).WhereElementIsNotElementType().GetElementCount();
-                var pipeFittings = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_PipeFitting).WhereElementIsNotElementType().GetElementCount();
-                var fixtures = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_PlumbingFixtures).WhereElementIsNotElementType().GetElementCount();
+                var pipeSystems = document.GetElements().OfClass(typeof(PipingSystem)).Cast<PipingSystem>().ToList();
+                var pipes = document.GetInstances(BuiltInCategory.OST_PipeCurves).Count;
+                var pipeFittings = document.GetInstances(BuiltInCategory.OST_PipeFitting).Count;
+                var fixtures = document.GetInstances(BuiltInCategory.OST_PlumbingFixtures).Count;
 
                 overview["plumbing"] = new
                 {
@@ -86,14 +79,10 @@ public class SystemOverviewSkill : ISkill
 
             if (discipline is "all" or "electrical")
             {
-                var elecSystems = new FilteredElementCollector(document)
-                    .OfClass(typeof(ElectricalSystem)).Cast<ElectricalSystem>().ToList();
-                var panels = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_ElectricalEquipment).WhereElementIsNotElementType().GetElementCount();
-                var conduits = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_Conduit).WhereElementIsNotElementType().GetElementCount();
-                var cableTrays = new FilteredElementCollector(document)
-                    .OfCategory(BuiltInCategory.OST_CableTray).WhereElementIsNotElementType().GetElementCount();
+                var elecSystems = document.GetElements().OfClass(typeof(ElectricalSystem)).Cast<ElectricalSystem>().ToList();
+                var panels = document.GetInstances(BuiltInCategory.OST_ElectricalEquipment).Count;
+                var conduits = document.GetInstances(BuiltInCategory.OST_Conduit).Count;
+                var cableTrays = document.GetInstances(BuiltInCategory.OST_CableTray).Count;
 
                 overview["electrical"] = new
                 {
