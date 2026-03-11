@@ -25,12 +25,14 @@ public class RevitEventHandler : IExternalEventHandler
         _externalEvent = null;
     }
 
-    public async Task<object?> ExecuteAsync(Func<Document, object?> action)
+    public async Task<object?> ExecuteAsync(Func<Document, object?> action, int timeoutMs = 30_000)
     {
         if (_externalEvent is null)
             throw new InvalidOperationException("Handler not registered.");
 
-        await _gate.WaitAsync().ConfigureAwait(false);
+        if (!await _gate.WaitAsync(timeoutMs).ConfigureAwait(false))
+            throw new TimeoutException("Timed out waiting for previous Revit operation to complete.");
+
         try
         {
             var tcs = new TaskCompletionSource<object?>(
@@ -38,6 +40,9 @@ public class RevitEventHandler : IExternalEventHandler
             _tcs = tcs;
             _pendingAction = action;
             _externalEvent.Raise();
+
+            using var cts = new CancellationTokenSource(timeoutMs);
+            cts.Token.Register(() => tcs.TrySetCanceled(), useSynchronizationContext: false);
 
             return await tcs.Task.ConfigureAwait(false);
         }

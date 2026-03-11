@@ -765,20 +765,29 @@ public class WebViewBridge : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            _chatSession?.PersistMemoryAsync().GetAwaiter().GetResult();
-            _codeGenLibrary?.SaveAsync().GetAwaiter().GetResult();
-            _dynamicSkillRegistry?.SaveAsync().GetAwaiter().GetResult();
-            _patternLearning?.SaveAsync().GetAwaiter().GetResult();
-            _fewShotLearning?.SaveAsync().GetAwaiter().GetResult();
-            _dynamicGlossary?.SaveAsync().GetAwaiter().GetResult();
-        }
-        catch { }
-
-        _agentLogger?.Dispose();
         if (_webView.CoreWebView2 is not null)
             _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+
+        _ = SaveStateAsync();
+
+        _agentLogger?.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private async Task SaveStateAsync()
+    {
+        try
+        {
+            var timeout = Task.Delay(5000);
+            var saves = Task.WhenAll(
+                _chatSession?.PersistMemoryAsync() ?? Task.CompletedTask,
+                _codeGenLibrary?.SaveAsync() ?? Task.CompletedTask,
+                _dynamicSkillRegistry?.SaveAsync() ?? Task.CompletedTask,
+                _patternLearning?.SaveAsync() ?? Task.CompletedTask,
+                _fewShotLearning?.SaveAsync() ?? Task.CompletedTask,
+                _dynamicGlossary?.SaveAsync() ?? Task.CompletedTask);
+            await Task.WhenAny(saves, timeout);
+        }
+        catch { }
     }
 }
