@@ -481,11 +481,20 @@ public class WebViewBridge : IDisposable
             var info = await _ollamaService.ShowModelAsync();
             if (info is { ContextLength: > 0 })
             {
-                _contextOptimizer.UpdateMaxTokens(info.ContextLength);
+                var running = await _ollamaService.ListRunningModelsAsync();
+                var isGpu = running.Any(m => m.SizeVram > m.Size / 2);
+
+                // Cap context to avoid slow CPU inference when no GPU offload
+                const int maxCpuCtx = 8192;
+                var effectiveCtx = isGpu
+                    ? info.ContextLength
+                    : Math.Min(info.ContextLength, maxCpuCtx);
+
+                _contextOptimizer.UpdateMaxTokens(effectiveCtx);
                 _ollamaService.UpdateOptions(opts =>
                 {
-                    if (opts.NumCtx is null || opts.NumCtx < info.ContextLength)
-                        opts.NumCtx = info.ContextLength;
+                    if (opts.NumCtx is null || opts.NumCtx != effectiveCtx)
+                        opts.NumCtx = effectiveCtx;
                 });
             }
         }
@@ -826,13 +835,22 @@ public class WebViewBridge : IDisposable
             if (modelInfo is not null)
             {
                 if (modelInfo.ContextLength > 0)
-                    _contextOptimizer?.UpdateMaxTokens(modelInfo.ContextLength);
+                {
+                    var running = await _ollamaService.ListRunningModelsAsync().ConfigureAwait(false);
+                    var isGpu = running.Any(m => m.SizeVram > m.Size / 2);
+                    var effectiveCtx = isGpu
+                        ? modelInfo.ContextLength
+                        : Math.Min(modelInfo.ContextLength, 8192);
+                    _contextOptimizer?.UpdateMaxTokens(effectiveCtx);
+                    _ollamaService.UpdateOptions(o => o.NumCtx = effectiveCtx);
+                }
 
+                var usedCtx = opts.NumCtx ?? modelInfo.ContextLength;
                 SendToUI(new BridgeMessage
                 {
                     Type = BridgeMessageTypes.AssistantMessage,
                     Content = $"✅ Model **{opts.Model}** connected successfully " +
-                              $"(ctx: {modelInfo.ContextLength}, {modelInfo.ParameterSize}, {modelInfo.QuantizationLevel})"
+                              $"(ctx: {usedCtx}, {modelInfo.ParameterSize}, {modelInfo.QuantizationLevel})"
                 });
             }
             else
