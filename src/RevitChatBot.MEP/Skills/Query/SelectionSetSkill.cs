@@ -54,16 +54,25 @@ public class SelectionSetSkill : ISkill
         if (string.IsNullOrWhiteSpace(name))
             return SkillResult.Fail("Parameter 'name' is required for save.");
 
-        if (string.IsNullOrWhiteSpace(idsStr))
-            return SkillResult.Fail("Parameter 'element_ids' is required for save (comma-separated IDs).");
+        HashSet<long> ids;
 
-        var ids = idsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(s => long.TryParse(s, out _))
-            .Select(long.Parse)
-            .ToHashSet();
+        if (string.IsNullOrWhiteSpace(idsStr))
+        {
+            var selIds = context.GetCurrentSelectionIds();
+            if (selIds is null || selIds.Count == 0)
+                return SkillResult.Fail("No element_ids provided and no elements currently selected in Revit.");
+            ids = selIds.ToHashSet();
+        }
+        else
+        {
+            ids = idsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(s => long.TryParse(s, out _))
+                .Select(long.Parse)
+                .ToHashSet();
+        }
 
         if (ids.Count == 0)
-            return SkillResult.Fail("No valid element IDs provided.");
+            return SkillResult.Fail("No valid element IDs resolved.");
 
         SavedSets[name] = ids;
         return SkillResult.Ok($"Saved selection set '{name}' with {ids.Count} elements.", new

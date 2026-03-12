@@ -30,6 +30,9 @@ namespace RevitChatBot.MEP.Skills.Modify;
 [SkillParameter("level_filter", "string",
     "Optional level name to restrict scope.",
     isRequired: false)]
+[SkillParameter("source", "string",
+    "'all' (default) to process all elements in category, 'selected' to only process currently selected elements in Revit.",
+    isRequired: false, allowedValues: new[] { "all", "selected" })]
 public class MapParametersSkill : ISkill
 {
     private static readonly Dictionary<string, BuiltInCategory[]> CategoryMap = new(StringComparer.OrdinalIgnoreCase)
@@ -62,22 +65,46 @@ public class MapParametersSkill : ISkill
         var transform = parameters.GetValueOrDefault("transform")?.ToString() ?? "copy";
         var action = parameters.GetValueOrDefault("action")?.ToString() ?? "preview";
         var levelFilter = parameters.GetValueOrDefault("level_filter")?.ToString();
+        var source = parameters.GetValueOrDefault("source")?.ToString() ?? "all";
 
         if (string.IsNullOrWhiteSpace(sourceParam))
             return SkillResult.Fail("source_parameter is required.");
         if (string.IsNullOrWhiteSpace(targetParam))
             return SkillResult.Fail("target_parameter is required.");
-        if (!CategoryMap.TryGetValue(category, out var bics))
+
+        List<long>? selectionIds = null;
+        if (source == "selected")
+        {
+            selectionIds = context.GetCurrentSelectionIds();
+            if (selectionIds is null || selectionIds.Count == 0)
+                return SkillResult.Fail("No elements currently selected in Revit.");
+        }
+        else if (!CategoryMap.TryGetValue(category, out _))
+        {
             return SkillResult.Fail($"Unknown category '{category}'.");
+        }
+
+        CategoryMap.TryGetValue(category, out var bics);
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
 
             var elements = new List<Element>();
-            foreach (var bic in bics)
+
+            if (source == "selected" && selectionIds is not null)
             {
-                elements.AddRange(document.GetInstances(bic));
+                foreach (var id in selectionIds)
+                {
+                    var elem = document.GetElement(new ElementId(id));
+                    if (elem is not null)
+                        elements.Add(elem);
+                }
+            }
+            else if (bics is not null)
+            {
+                foreach (var bic in bics)
+                    elements.AddRange(document.GetInstances(bic));
             }
 
             if (!string.IsNullOrWhiteSpace(levelFilter))

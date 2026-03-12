@@ -1,3 +1,4 @@
+using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.Core.CodeGen;
@@ -36,17 +37,23 @@ public class DynamicCodeSkill : ISkill
     private readonly CodeGenLibrary? _library;
     private readonly DynamicSkillRegistry? _dynamicRegistry;
     private readonly CodePatternLearning? _patternLearning;
+    private readonly LearningModuleHub? _hub;
+    private readonly CodeAutoFixer? _autoFixer;
 
     public DynamicCodeSkill(
         DynamicCodeExecutor executor,
         CodeGenLibrary? library = null,
         DynamicSkillRegistry? dynamicRegistry = null,
-        CodePatternLearning? patternLearning = null)
+        CodePatternLearning? patternLearning = null,
+        LearningModuleHub? hub = null,
+        CodeAutoFixer? autoFixer = null)
     {
         _executor = executor;
         _library = library;
         _dynamicRegistry = dynamicRegistry;
         _patternLearning = patternLearning;
+        _hub = hub;
+        _autoFixer = autoFixer;
     }
 
     public async Task<SkillResult> ExecuteAsync(
@@ -74,17 +81,25 @@ public class DynamicCodeSkill : ISkill
 
         if (result.Success)
         {
-            _library?.RecordSuccess(description, result.GeneratedCode ?? code,
+            var finalCode = result.GeneratedCode ?? code;
+            _library?.RecordSuccess(description, finalCode,
                 result.Output ?? "", result.ExecutionTime.TotalMilliseconds);
-            _patternLearning?.RecordSuccess(result.GeneratedCode ?? code,
+            _patternLearning?.RecordSuccess(finalCode,
                 description, result.ExecutionTime.TotalMilliseconds);
+
+            var analysis = CodeAutoFixer.AnalyzeCode(finalCode);
+            PublishCodeGenEvent(true, description, finalCode, null, analysis);
 
             if (!string.IsNullOrWhiteSpace(saveAsSkill) && _dynamicRegistry != null)
             {
                 try
                 {
-                    var def = _dynamicRegistry.CreateSkill(saveAsSkill, description, result.GeneratedCode ?? code);
+                    var def = _dynamicRegistry.CreateSkill(saveAsSkill, description, finalCode);
                     _ = _dynamicRegistry.SaveAsync(CancellationToken.None);
+
+                    _hub?.Publish(new LearningEvent("DynamicCodeSkill",
+                        LearningEventTypes.SkillRegistered,
+                        new { SkillName = def.Name, Description = description }));
 
                     return SkillResult.Ok(
                         $"{result.Output}\n\n--- Saved as reusable skill: '{def.Name}' ---\n" +
@@ -116,8 +131,26 @@ public class DynamicCodeSkill : ISkill
         _patternLearning?.RecordFailure(result.GeneratedCode ?? code, result.Error ?? "");
         _ = Task.Run(() => _patternLearning?.SaveAsync(CancellationToken.None));
 
+        PublishCodeGenEvent(false, description, result.GeneratedCode ?? code, result.Error, null);
+
         var errorFeedback = BuildErrorFeedback(result);
         return SkillResult.Fail(errorFeedback, result.GeneratedCode);
+    }
+
+    private void PublishCodeGenEvent(bool success, string description, string code,
+        string? error, CodeAnalysisResult? analysis)
+    {
+        _hub?.Publish(new LearningEvent(
+            "DynamicCodeSkill",
+            success ? LearningEventTypes.CodeGenSuccess : LearningEventTypes.CodeGenFailure,
+            new CodeGenEventData
+            {
+                Query = description,
+                Code = code,
+                Error = error,
+                ApiPatternsUsed = analysis?.ApiPatterns ?? [],
+                CategoriesQueried = analysis?.CategoriesQueried ?? []
+            }));
     }
 
     /// <summary>

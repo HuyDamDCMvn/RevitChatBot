@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.LLM;
 
 namespace RevitChatBot.Core.Agent;
@@ -67,6 +68,31 @@ public class InteractionRecorder
                 .Distinct()
                 .ToList(),
             StepCount = plan.Steps.Count,
+            Timestamp = DateTime.UtcNow
+        });
+
+        Prune();
+    }
+
+    /// <summary>
+    /// Record from a hub PlanCompletedData event (hub-driven, no AgentPlan dependency).
+    /// </summary>
+    public void RecordFromEvent(Learning.PlanCompletedData data)
+    {
+        if (string.IsNullOrWhiteSpace(data.Goal)) return;
+
+        var existing = _records.Any(r =>
+            r.Query == data.Goal && r.Timestamp > DateTime.UtcNow.AddSeconds(-5));
+        if (existing) return;
+
+        _records.Add(new InteractionRecord
+        {
+            Query = data.Goal,
+            Answer = Truncate(data.FinalAnswer ?? "", 500),
+            Topic = data.Category ?? data.Intent,
+            Intent = data.Intent,
+            SkillsUsed = data.SkillsUsed,
+            StepCount = data.StepCount,
             Timestamp = DateTime.UtcNow
         });
 

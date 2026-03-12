@@ -1,0 +1,225 @@
+---
+description: Đảm bảo chất lượng code và luồng thông tin khi nâng cấp RevitChatBot
+alwaysApply: true
+---
+
+# Quy tắc phát triển RevitChatBot
+
+## 1. Kiểm tra luồng thông tin khi nâng cấp code
+
+Mỗi lần thay đổi code, PHẢI xác minh luồng dữ liệu end-to-end không bị đứt:
+
+```
+UI (WebView2) ↔ WebViewBridge ↔ ChatSession/Agent ↔ Skills ↔ RevitEventHandler ↔ Revit API
+```
+
+### Checklist bắt buộc
+
+- **Input**: Dữ liệu từ tầng trước có được truyền đúng kiểu và đầy đủ sang tầng sau không?
+- **Output**: Kết quả trả về có đi ngược lại đúng luồng về UI không?
+- **Null safety**: Các giá trị nullable (`SkillContext.RevitDocument`, `RevitApiInvoker`, `SendToUI`) có được kiểm tra trước khi dùng không?
+- **Skill registration**: Skill mới có được đăng ký trong `SkillRegistry` và nhận đúng `SkillContext` không?
+- **Bridge messages**: Message type gửi qua `WebViewBridge` có khớp với handler bên frontend không?
+
+### Khi thêm/sửa Skill
+
+1. Verify `ISkill.ExecuteAsync` nhận đúng `parameters` từ Agent
+2. Verify `SkillContext.RevitApiInvoker` được gọi đúng cách để chạy trên Revit main thread
+3. Verify `SkillResult` trả về chứa data đúng format mà UI mong đợi
+4. Verify `SendToUI` callback hoạt động nếu skill cần push data trực tiếp
+
+### Khi thêm/sửa WebViewBridge handler
+
+1. Verify message type từ frontend khớp với switch/handler trong C#
+2. Verify response gửi về frontend đúng schema (camelCase JSON)
+3. Verify error được bắt và trả về user-friendly message
+
+## 2. Đảm bảo code chạy được trong Revit
+
+### Revit API threading
+
+- **Mọi thao tác Revit API** phải chạy qua `RevitEventHandler.ExecuteAsync()` — KHÔNG BAO GIỜ gọi trực tiếp từ background thread
+- Transaction phải được wrap đúng: `using var t = new Transaction(doc, "name"); t.Start(); ... t.Commit();`
+- Không giữ reference đến Revit object (Element, Document) ngoài scope của `RevitApiInvoker` callback
+
+### Build & runtime
+
+- Target framework: `net8.0-windows` cho Addin, `net8.0` cho libraries
+- Revit API references phải là `<Private>false</Private>` (không copy vào output)
+- Không dùng API mới hơn Revit version đang target (hiện tại: **Revit 2025**)
+- Mọi thay đổi phải build thành công (`dotnet build`) trước khi coi là hoàn thành
+
+### Error handling
+
+- Bắt exception ở tầng Bridge, KHÔNG để exception thoát lên Revit process
+- Log lỗi rõ ràng qua `AgentLogger` để debug
+- Trả message lỗi có ý nghĩa về UI, không để user thấy stack trace
+
+## 3. CodeGen Pipeline — Luồng sinh code động
+
+### Kiến trúc CodeGen
+
+```
+User Query → AgentOrchestrator.BuildCodeGenContextAsync()
+  ├── CodeGenLibrary (cached successful code)
+  ├── DynamicSkillRegistry (promoted skills)
+  ├── CodePatternLearning (API patterns + error patterns)
+  ├── CompositeSkillEngine (multi-skill workflows)
+  ├── WrapperApiReference (API shortcuts)
+  ├── KnowledgeCodeTemplateStore (templates from knowledge docs)
+  ├── SkillKnowledgeIndex (existing skills → avoid codegen)
+  ├── DynamicCodeExamplesLibrary (learned examples from success)
+  ├── SkillKnowledgeRecipeStore (proven combos)
+  ├── CodeGenKnowledgeEnricher (RAG domain knowledge)
+  └── LearningCortex.GetCodeGenInsights() (failure patterns to avoid)
+→ DynamicCodeSkill.ExecuteAsync()
+  ├── CodeAutoFixer.TryAutoFix() (Roslyn deterministic fixes)
+  ├── CodeAutoFixer.AnalyzeCode() (AST analysis → API patterns)
+  ├── LearningModuleHub.Publish(CodeGenSuccess/Failure)
+  └── DynamicSkillRegistry.CreateSkill() (promote to reusable)
+```
+
+### Checklist khi thêm/sửa CodeGen module
+
+1. Module có được inject vào `AgentOrchestrator` constructor không?
+2. Module có tham gia `BuildCodeGenContextAsync()` để inject context vào prompt không?
+3. Module có publish events qua `LearningModuleHub` khi có data mới không?
+4. Module có được persist qua `SelfLearningPersistenceManager` không?
+5. Module có sử dụng shared `KeywordExtractor` + `RelevanceScorer` thay vì tự viết?
+
+### Nguyên tắc CodeGen
+
+- **DRY**: Dùng `KeywordExtractor` và `RelevanceScorer` (namespace `RevitChatBot.Core.CodeGen`) cho mọi keyword extraction và scoring. KHÔNG viết lại logic này trong từng module.
+- **Auto-fix trước LLM retry**: Khi compilation fail, `CodeAutoFixer.TryAutoFix()` thử fix deterministic trước. Chỉ retry bằng LLM nếu auto-fix không xử lý được.
+- **AST analysis**: Dùng `CodeAutoFixer.AnalyzeCode()` để extract API patterns từ generated code, thay vì regex/string matching.
+- **Selective context**: Chỉ inject context relevant cho query hiện tại (dựa trên keyword matching và intent analysis), không dump toàn bộ.
+
+## 4. Cross-learning 2 CHIỀU bắt buộc
+
+Mọi module learning PHẢI giao tiếp 2 chiều qua `LearningModuleHub` (event bus trung tâm). Không module nào được hoạt động cô lập.
+
+### LearningModuleHub — Event Bus trung tâm
+
+```
+LearningModuleHub (event bus)
+  ├── Publishers:
+  │   ├── DynamicCodeSkill → codegen_success / codegen_failure
+  │   ├── AgentOrchestrator → plan_completed / skill_failure / skill_recovery
+  │   └── DynamicSkillRegistry → skill_registered
+  ├── Subscribers:
+  │   ├── LearningCortex → codegen_success/failure → RecordCodeGenInternal()
+  │   ├── FailureRecoveryLearner → skill_failure → RecordFailure()
+  │   ├── CodePatternLearning → codegen events → update patterns
+  │   └── DynamicGlossary → codegen_success → learn new terms
+  └── Module Registry:
+      ├── Validate dependencies at startup
+      └── GetDependencyGraph() for debugging
+```
+
+### Luồng 2 chiều giữa các module
+
+```
+CodeGen → Learning:
+  DynamicCodeSkill publish CodeGenSuccess/Failure events
+  → LearningCortex.RecordCodeGenInternal() cập nhật failure history
+  → CodePatternLearning cập nhật API patterns + error patterns
+  → DynamicGlossary learn new terms from code
+
+Learning → CodeGen:
+  LearningCortex.GetCodeGenInsights() inject recent failures vào prompt
+  → AgentOrchestrator.BuildCodeGenContextAsync() sử dụng
+  CrossSkillCorrelator suggest fallback skills khi code fail
+  FailureRecoveryLearner provide recovery advice
+```
+
+### Checklist cross-learning bắt buộc
+
+**Khi thêm/sửa Skill:**
+1. Skill phải được đăng ký trong `SkillRegistry` với metadata đầy đủ
+2. Publish event `skill_registered` qua `LearningModuleHub`
+3. `SkillKnowledgeIndex` phải được re-index (auto via `SelfTrainingScheduler.RunSkillReindex()`)
+4. `SemanticSkillRouter` phải route được đến skill mới
+5. `LearningCortex.CrossSkillCorrelator` phải nhận biết mối quan hệ
+6. `CompositeSkillEngine` phải kết hợp skill mới vào workflow chains
+7. `SkillKnowledgeRecipeStore` phải tạo recipe mới
+8. `AdaptiveFewShotLearning` phải có ít nhất 1 example
+
+**Khi thêm/sửa Knowledge:**
+1. Knowledge mới phải index vào `KnowledgeManager` (RAG vector store)
+2. `KnowledgeSynthesizer` phải tổng hợp knowledge mới + hiện có
+3. `DynamicGlossary` phải bổ sung thuật ngữ mới
+4. `CodeGenKnowledgeEnricher` phải dùng knowledge mới để enrich codegen
+5. `KnowledgeCodeTemplateStore` phải extract code templates
+6. `SkillKnowledgeRecipeStore` phải tạo recipe kết hợp knowledge + skills
+
+**Khi thêm/sửa Learning Module:**
+1. Register vào `LearningModuleHub` trong `WebViewBridge.InitializeLearningCortex()`
+2. Implement `ILearningModule` nếu cần declare dependencies
+3. Subscribe events cần thiết qua `_hub.Subscribe()`
+4. Publish events khi có data mới qua `_hub.Publish()`
+5. Add Save/Load vào `SelfLearningPersistenceManager`
+6. Add training task vào `SelfTrainingScheduler.RunCycleAsync()` nếu cần background processing
+
+**Khi thêm/sửa Context Provider:**
+1. Provider mới phải register vào `ContextManager`
+2. `ContextUsageTracker` phải track được usage
+3. `ContextWindowOptimizer` phải biết prioritize đúng cách
+
+## 5. Module Bridge Registry — Nhận diện và kết nối
+
+### Registered Modules (trong LearningModuleHub)
+
+| Module ID | Class | Registered in |
+|---|---|---|
+| LearningCortex | LearningCortex | InitializeLearningCortex() |
+| FailureRecovery | FailureRecoveryLearner | InitializeLearningCortex() |
+| ContextUsageTracker | ContextUsageTracker | InitializeLearningCortex() |
+| CodeGenLibrary | CodeGenLibrary | RegisterDynamicCode() |
+| PatternLearning | CodePatternLearning | RegisterDynamicCode() |
+| DynamicCodeExamples | DynamicCodeExamplesLibrary | RegisterDynamicCode() |
+| RecipeStore | SkillKnowledgeRecipeStore | RegisterDynamicCode() |
+| SkillKnowledgeIndex | SkillKnowledgeIndex | RegisterDynamicCode() |
+| CompositeEngine | CompositeSkillEngine | InitializeSelfTraining() |
+| PersistenceManager | SelfLearningPersistenceManager | InitializeSelfTraining() |
+| DynamicGlossary | DynamicGlossary | WireCrossLearningSubscriptions() |
+| VisualFeedbackLearner | VisualFeedbackLearner | WireCrossLearningSubscriptions() |
+| VisualWorkflowComposer | VisualWorkflowComposer | WireCrossLearningSubscriptions() |
+| KnowledgeCodeTemplateStore | KnowledgeCodeTemplateStore | WireCrossLearningSubscriptions() |
+| CodeGenKnowledgeEnricher | CodeGenKnowledgeEnricher | WireCrossLearningSubscriptions() |
+| FewShotLearning | AdaptiveFewShotLearning | WireCrossLearningSubscriptions() |
+| InteractionRecorder | InteractionRecorder | WireCrossLearningSubscriptions() |
+| ImprovementStore | ImprovementStore | WireCrossLearningSubscriptions() |
+| PlanReplayStore | PlanReplayStore | WireCrossLearningSubscriptions() |
+| SelfEvaluator | SelfEvaluator | WireCrossLearningSubscriptions() |
+| SelfTrainingScheduler | SelfTrainingScheduler | WireCrossLearningSubscriptions() |
+
+### Event Flow Map (Bidirectional)
+
+| Event | Publisher | Subscribers |
+|---|---|---|
+| codegen_success | DynamicCodeSkill, LearningCortex, PatternLearning | LearningCortex, CodePatternLearning, CodeGenLibrary, DynamicCodeExamples, DynamicGlossary, FewShotLearning, KnowledgeCodeTemplateStore, RecipeStore, CodeAutoFixer (via sync) |
+| codegen_failure | DynamicCodeSkill, LearningCortex | LearningCortex, CodePatternLearning, CodeGenLibrary, FailureRecoveryLearner |
+| skill_failure | AgentOrchestrator | LearningCortex → FailureRecoveryLearner, VisualFeedbackLearner |
+| skill_recovery | AgentOrchestrator, FailureRecoveryLearner | LearningCortex (correlator + tracker), VisualFeedbackLearner |
+| skill_registered | DynamicCodeSkill | SkillKnowledgeIndex (re-index) |
+| plan_completed | AgentOrchestrator | LearningCortex, ContextUsageTracker, CompositeSkillEngine, RecipeStore, ImprovementStore, InteractionRecorder, VisualWorkflowComposer |
+| composite_discovered | CompositeSkillEngine, SelfTrainingScheduler | SkillKnowledgeIndex (re-index) |
+| knowledge_indexed | SelfTrainingScheduler | KnowledgeCodeTemplateStore |
+| context_used | ContextUsageTracker | ContextWindowOptimizer |
+| glossary_updated | DynamicGlossary | (available for future subscribers) |
+| pattern_learned | ImprovementStore | (available for future subscribers) |
+
+### Validation
+
+- `SelfTrainingScheduler.RunHubValidation()` chạy mỗi cycle để kiểm tra missing dependencies
+- `LearningModuleHub.GetDependencyGraph()` xuất sơ đồ dependency cho debugging
+- `LearningModuleHub.ValidateConnections()` trả về danh sách issues nếu có module bị thiếu dependency
+
+### Nguyên tắc
+
+- **Không cô lập**: Mọi module PHẢI register vào `LearningModuleHub`
+- **Event-driven**: Giao tiếp giữa modules qua events, không gọi trực tiếp
+- **Verify tích hợp**: Trace `WebViewBridge.Initialize()` đảm bảo component mới được wire
+- **Persistence**: Mọi learning data phải persist qua `SelfLearningPersistenceManager`
+- **Idle learning**: `SelfTrainingScheduler` tự động phát hiện và tích hợp trong cycle tiếp theo
+- **CrossSkillCorrelator persistence**: Correlation data persist qua file, không mất khi restart

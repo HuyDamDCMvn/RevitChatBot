@@ -36,6 +36,13 @@ public class OllamaOptions
     /// Number of top log probabilities per token (requires Logprobs=true).
     /// </summary>
     public int? TopLogprobs { get; set; }
+
+    /// <summary>
+    /// Dedicated local model for code generation (e.g. "qwen2.5-coder:14b").
+    /// When set, execute_revit_code uses this model instead of the main chat model.
+    /// Falls back to main Model if unavailable.
+    /// </summary>
+    public string? CodeGenModel { get; set; }
 }
 
 public interface IOllamaService
@@ -73,6 +80,12 @@ public interface IOllamaService
     /// List models currently loaded into memory with VRAM usage and expiry info.
     /// </summary>
     Task<List<RunningModel>> ListRunningModelsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Pull (download) a model from Ollama registry. Streams progress updates.
+    /// </summary>
+    IAsyncEnumerable<ModelPullProgress> PullModelAsync(
+        string modelName, CancellationToken cancellationToken = default);
 
     void UpdateOptions(Action<OllamaOptions> configure);
     OllamaOptions GetCurrentOptions();
@@ -130,4 +143,27 @@ public class ToolSelectionConfidence
     public string ToolName { get; set; } = string.Empty;
     public double Confidence { get; set; }
     public bool IsLowConfidence => Confidence < 0.3;
+}
+
+/// <summary>
+/// Progress update from Ollama /api/pull streaming endpoint.
+/// </summary>
+public class ModelPullProgress
+{
+    public string Status { get; set; } = "";
+    public long Total { get; set; }
+    public long Completed { get; set; }
+    public double ProgressPercent => Total > 0 ? (double)Completed / Total * 100 : 0;
+    public bool IsComplete => Status == "success";
+}
+
+/// <summary>
+/// Recommended model definition for CodeGen model suggestions.
+/// </summary>
+public class RecommendedCodeGenModel
+{
+    public string Name { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string MinVram { get; set; } = "";
+    public long EstimatedSizeBytes { get; set; }
 }

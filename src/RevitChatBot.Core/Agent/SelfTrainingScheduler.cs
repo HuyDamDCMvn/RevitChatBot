@@ -1,4 +1,5 @@
 using RevitChatBot.Core.CodeGen;
+using RevitChatBot.Core.Learning;
 using RevitChatBot.Core.LLM;
 
 namespace RevitChatBot.Core.Agent;
@@ -10,6 +11,8 @@ namespace RevitChatBot.Core.Agent;
 /// - Skill gap analysis (weekly)
 /// - Workflow discovery (using LLM)
 /// - Recipe discovery (skill+knowledge combos)
+/// - Module hub validation
+/// - Cross-skill correlator persistence
 /// - Persistence of all learning data
 /// </summary>
 public class SelfTrainingScheduler : IDisposable
@@ -22,6 +25,8 @@ public class SelfTrainingScheduler : IDisposable
     private readonly SelfLearningPersistenceManager? _persistenceManager;
     private readonly SkillKnowledgeRecipeStore? _recipeStore;
     private readonly AgentLogger? _logger;
+    private readonly LearningModuleHub? _hub;
+    private readonly SkillKnowledgeIndex? _skillKnowledgeIndex;
 
     private readonly SemaphoreSlim _runLock = new(1, 1);
     private DateTime _lastGapAnalysis = DateTime.MinValue;
@@ -45,7 +50,9 @@ public class SelfTrainingScheduler : IDisposable
         SkillDiscoveryAgent? discoveryAgent = null,
         SelfLearningPersistenceManager? persistenceManager = null,
         AgentLogger? logger = null,
-        SkillKnowledgeRecipeStore? recipeStore = null)
+        SkillKnowledgeRecipeStore? recipeStore = null,
+        LearningModuleHub? hub = null,
+        SkillKnowledgeIndex? skillKnowledgeIndex = null)
     {
         _compositeEngine = compositeEngine;
         _recorder = recorder;
@@ -54,6 +61,8 @@ public class SelfTrainingScheduler : IDisposable
         _persistenceManager = persistenceManager;
         _logger = logger;
         _recipeStore = recipeStore;
+        _hub = hub;
+        _skillKnowledgeIndex = skillKnowledgeIndex;
     }
 
     /// <summary>
@@ -78,6 +87,8 @@ public class SelfTrainingScheduler : IDisposable
             await RunGapAnalysis(ct);
             await RunWorkflowDiscovery(ct);
             RunRecipeAnalysis();
+            RunHubValidation();
+            RunSkillReindex();
 
             if (_persistenceManager != null)
                 await _persistenceManager.PersistAllAsync(ct);
@@ -100,7 +111,12 @@ public class SelfTrainingScheduler : IDisposable
             foreach (var c in candidates.Take(3))
             {
                 if (_compositeEngine.PromoteToCompositeSkill(c))
+                {
                     promoted++;
+                    _hub?.Publish(new LearningEvent("SelfTrainingScheduler",
+                        LearningEventTypes.CompositeDiscovered,
+                        new { c.SuggestedName, c.SuggestedDescription, c.UsageCount }));
+                }
             }
 
             if (promoted > 0)
@@ -135,9 +151,14 @@ public class SelfTrainingScheduler : IDisposable
             var articlesCreated = await OnSynthesizeKnowledge(records, ct);
 
             if (articlesCreated > 0)
+            {
                 _logger?.LogToolExecution("self_training_knowledge_synthesis",
                     new Dictionary<string, object?> { ["articles_created"] = articlesCreated },
                     true, 0);
+                _hub?.Publish(new LearningEvent("SelfTrainingScheduler",
+                    LearningEventTypes.KnowledgeIndexed,
+                    new { ArticlesCreated = articlesCreated }));
+            }
         }
         catch { /* non-critical */ }
     }
@@ -211,6 +232,32 @@ public class SelfTrainingScheduler : IDisposable
                     new Dictionary<string, object?> { ["frequent_recipes"] = frequentRecipes.Count },
                     true, 0);
         }
+        catch { /* non-critical */ }
+    }
+
+    private void RunHubValidation()
+    {
+        if (_hub == null) return;
+        try
+        {
+            var issues = _hub.ValidateConnections();
+            if (issues.Count > 0)
+            {
+                _logger?.LogToolExecution("self_training_hub_validation",
+                    new Dictionary<string, object?>
+                    {
+                        ["issues"] = issues.Count,
+                        ["details"] = string.Join("; ", issues.Take(5))
+                    },
+                    false, 0);
+            }
+        }
+        catch { /* non-critical */ }
+    }
+
+    private void RunSkillReindex()
+    {
+        try { _skillKnowledgeIndex?.RebuildIndex(); }
         catch { /* non-critical */ }
     }
 

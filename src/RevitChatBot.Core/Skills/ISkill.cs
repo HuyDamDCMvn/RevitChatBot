@@ -12,6 +12,14 @@ public class SkillContext
 {
     public object? RevitDocument { get; set; }
     public Func<Func<object, object?>, Task<object?>>? RevitApiInvoker { get; set; }
+
+    /// <summary>
+    /// Invokes an action on the Revit main thread with UIDocument access.
+    /// Required for UI operations such as setting selection, switching views, etc.
+    /// The callback receives a UIDocument (boxed as object for Core project independence).
+    /// </summary>
+    public Func<Func<object, object?>, Task<object?>>? RevitUIInvoker { get; set; }
+
     public Dictionary<string, object?> Extra { get; set; } = new();
 
     /// <summary>

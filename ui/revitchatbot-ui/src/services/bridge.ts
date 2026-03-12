@@ -101,6 +101,24 @@ class RevitBridge {
     this.send({ type: MessageTypes.MEMORY_STATS });
   }
 
+  pullModel(modelName: string, setAsCodeGen = true): void {
+    this.send({
+      type: MessageTypes.MODEL_PULL_REQUEST,
+      data: { modelName, setAsCodeGen },
+    });
+  }
+
+  cancelPull(): void {
+    this.send({ type: MessageTypes.MODEL_PULL_CANCEL });
+  }
+
+  setCodeGenModel(modelName: string): void {
+    this.send({
+      type: MessageTypes.CODEGEN_MODEL_SET,
+      data: { modelName },
+    });
+  }
+
   onMessage(handler: MessageHandler): () => void {
     this.handlers.push(handler);
     return () => {

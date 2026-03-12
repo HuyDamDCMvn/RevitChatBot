@@ -11,6 +11,7 @@ interface Props {
 
 export function SettingsPanel({ isOpen, onClose, activeModel, syncedModels }: Props) {
   const [model, setModel] = useState('');
+  const [codeGenModel, setCodeGenModel] = useState('');
   const [temperature, setTemperature] = useState(0.3);
   const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434');
   const [models, setModels] = useState<InstalledModelInfo[]>([]);
@@ -54,7 +55,7 @@ export function SettingsPanel({ isOpen, onClose, activeModel, syncedModels }: Pr
   if (!isOpen) return null;
 
   const handleSave = () => {
-    bridge.updateSettings({ model, temperature, ollamaUrl });
+    bridge.updateSettings({ model, temperature, ollamaUrl, codeGenModel: codeGenModel || undefined });
     onClose();
   };
 
@@ -131,6 +132,44 @@ export function SettingsPanel({ isOpen, onClose, activeModel, syncedModels }: Pr
               onChange={(e) => setTemperature(parseFloat(e.target.value))}
               className="w-full accent-revit-600"
             />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              CodeGen Model <span className="text-[10px] text-gray-400">(optional, for code generation)</span>
+            </label>
+            {models.length > 0 ? (
+              <select
+                value={codeGenModel}
+                onChange={(e) => setCodeGenModel(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-revit-400"
+              >
+                <option value="">Use main model</option>
+                {models
+                  .filter((m) =>
+                    m.name.includes('coder') ||
+                    m.name.includes('codellama') ||
+                    m.name.includes('deepseek-coder') ||
+                    true
+                  )
+                  .map((m) => (
+                    <option key={`cg-${m.name}`} value={m.name}>
+                      {m.name} ({m.parameterSize}, {formatSize(m.sizeMB)})
+                    </option>
+                  ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={codeGenModel}
+                onChange={(e) => setCodeGenModel(e.target.value)}
+                placeholder="e.g. qwen2.5-coder:7b (leave empty to use main)"
+                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-revit-400"
+              />
+            )}
+            <p className="mt-1 text-[10px] text-gray-400">
+              A code-specialized model improves Revit API code generation accuracy
+            </p>
           </div>
         </div>
 

@@ -240,6 +240,45 @@ public class OllamaService : IOllamaService, IDisposable
         return models;
     }
 
+    public async IAsyncEnumerable<ModelPullProgress> PullModelAsync(
+        string modelName,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var payload = new JsonObject { ["model"] = modelName, ["stream"] = true };
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/pull")
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+        };
+
+        using var response = await _httpClient.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+
+        while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var node = JsonNode.Parse(line);
+            if (node is null) continue;
+
+            var progress = new ModelPullProgress
+            {
+                Status = node["status"]?.GetValue<string>() ?? "",
+                Total = node["total"]?.GetValue<long>() ?? 0,
+                Completed = node["completed"]?.GetValue<long>() ?? 0
+            };
+
+            yield return progress;
+
+            if (progress.IsComplete)
+                yield break;
+        }
+    }
+
     public void UpdateOptions(Action<OllamaOptions> configure)
     {
         var previousBaseUrl = _options.BaseUrl;

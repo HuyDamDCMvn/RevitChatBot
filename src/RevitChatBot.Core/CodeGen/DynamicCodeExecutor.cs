@@ -12,6 +12,7 @@ public class DynamicCodeExecutor
 {
     private readonly RoslynCodeCompiler _compiler;
     private readonly TimeSpan _executionTimeout;
+    private CodeAutoFixer? _autoFixer;
 
     public const string EntryClassName = "DynamicAction";
     public const string EntryMethodName = "Execute";
@@ -21,6 +22,8 @@ public class DynamicCodeExecutor
         _compiler = compiler;
         _executionTimeout = timeout ?? TimeSpan.FromSeconds(30);
     }
+
+    public void SetAutoFixer(CodeAutoFixer fixer) => _autoFixer = fixer;
 
     /// <summary>
     /// Validates, compiles, and executes the code.
@@ -44,10 +47,23 @@ public class DynamicCodeExecutor
         var compilationResult = _compiler.Compile(wrappedCode);
         if (!compilationResult.Success)
         {
-            return CodeExecutionResult.Fail(
-                "Compilation failed:\n" +
-                string.Join("\n", compilationResult.Errors.Select(e => $"  - {e}")),
-                wrappedCode);
+            if (_autoFixer != null)
+            {
+                var fixedCode = _autoFixer.TryAutoFix(wrappedCode, compilationResult.Errors);
+                if (fixedCode != null)
+                {
+                    wrappedCode = fixedCode;
+                    compilationResult = _compiler.Compile(wrappedCode);
+                }
+            }
+
+            if (!compilationResult.Success)
+            {
+                return CodeExecutionResult.Fail(
+                    "Compilation failed:\n" +
+                    string.Join("\n", compilationResult.Errors.Select(e => $"  - {e}")),
+                    wrappedCode);
+            }
         }
 
         try

@@ -18,8 +18,8 @@ namespace RevitChatBot.Visualization.Skills;
     "Pass element IDs from previous skill results. " +
     "Use clear_tag to remove previous highlights before adding new ones.")]
 [SkillParameter("element_ids", "string",
-    "Comma-separated element IDs to highlight (e.g., '123456,789012,345678')",
-    isRequired: true)]
+    "Comma-separated element IDs to highlight. Not required when source='selected'.",
+    isRequired: false)]
 [SkillParameter("severity", "string",
     "Color severity: 'critical', 'warning', 'ok', 'info', 'clash', 'routing'",
     isRequired: false, allowedValues: new[] { "critical", "warning", "ok", "info", "clash", "routing" })]
@@ -29,6 +29,9 @@ namespace RevitChatBot.Visualization.Skills;
 [SkillParameter("tag", "string",
     "Tag for grouping highlights. Use skill name for easy cleanup (e.g., 'clearance_check'). Default: 'highlight'.",
     isRequired: false)]
+[SkillParameter("source", "string",
+    "'element_ids' (default) to use element_ids parameter, 'selected' to highlight currently selected elements in Revit.",
+    isRequired: false, allowedValues: new[] { "element_ids", "selected" })]
 public class HighlightElementsSkill : ISkill
 {
     private readonly VisualizationManager _vizManager;
@@ -43,9 +46,23 @@ public class HighlightElementsSkill : ISkill
         Dictionary<string, object?> parameters,
         CancellationToken cancellationToken = default)
     {
+        var source = parameters.GetValueOrDefault("source")?.ToString() ?? "element_ids";
         var idsStr = parameters.GetValueOrDefault("element_ids")?.ToString();
-        if (string.IsNullOrWhiteSpace(idsStr))
-            return SkillResult.Fail("Parameter 'element_ids' is required.");
+
+        string resolvedIdsStr;
+        if (source == "selected")
+        {
+            var selIds = context.GetCurrentSelectionIds();
+            if (selIds is null || selIds.Count == 0)
+                return SkillResult.Fail("No elements currently selected in Revit.");
+            resolvedIdsStr = string.Join(",", selIds);
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(idsStr))
+                return SkillResult.Fail("Parameter 'element_ids' is required when source is 'element_ids'.");
+            resolvedIdsStr = idsStr;
+        }
 
         var severity = parameters.GetValueOrDefault("severity")?.ToString() ?? "info";
         var tag = parameters.GetValueOrDefault("tag")?.ToString() ?? "highlight";
@@ -63,7 +80,7 @@ public class HighlightElementsSkill : ISkill
             if (clearPrevious)
                 _vizManager.ClearByTag(tag);
 
-            var ids = ParseElementIds(idsStr);
+            var ids = ParseElementIds(resolvedIdsStr);
             int highlighted = 0;
             var notFound = new List<string>();
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRevitBridge } from '../hooks/useRevitBridge';
 import { AnnotationToolbar } from './AnnotationToolbar';
+import { CodeGenBanner } from './CodeGenBanner';
 import { InputBar } from './InputBar';
 import { MessageBubble } from './MessageBubble';
 import { SettingsPanel } from './SettingsPanel';
@@ -9,7 +10,8 @@ import { SkillPanel } from './SkillPanel';
 export function ChatWindow() {
   const {
     messages, isLoading, isConnected, activeSkill, thinkingText,
-    activeModel, installedModels, sendMessage, clearMessages,
+    activeModel, installedModels, codeGenSuggest, pullProgress, isPulling,
+    sendMessage, clearMessages, dismissCodeGenSuggest,
   } = useRevitBridge();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -61,7 +63,7 @@ export function ChatWindow() {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-4">
-        {messages.length === 0 && (
+        {messages.length === 0 && !codeGenSuggest && (
           <div className="flex h-full flex-col items-center justify-center text-center text-gray-400">
             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-revit-50 text-2xl">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-8 w-8 text-revit-400">
@@ -72,6 +74,15 @@ export function ChatWindow() {
             <p className="text-sm font-medium">MEP ChatBot</p>
             <p className="mt-1 text-xs">Ask me anything about your MEP model</p>
           </div>
+        )}
+
+        {(codeGenSuggest || isPulling) && codeGenSuggest && (
+          <CodeGenBanner
+            suggest={codeGenSuggest}
+            pullProgress={pullProgress}
+            isPulling={isPulling}
+            onDismiss={dismissCodeGenSuggest}
+          />
         )}
 
         {messages.map((msg) => (

@@ -3,10 +3,16 @@ using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.Modify;
 
-[Skill("batch_modify", "Batch modify element parameters. Set a parameter value on multiple elements in one operation.")]
-[SkillParameter("elementIds", "string", "Comma-separated element IDs to modify", isRequired: true)]
+[Skill("batch_modify", "Batch modify element parameters. Set a parameter value on multiple elements in one operation. " +
+    "Supports targeting currently selected elements in Revit via source='selected'.")]
+[SkillParameter("elementIds", "string",
+    "Comma-separated element IDs to modify. Not required when source='selected'.",
+    isRequired: false)]
 [SkillParameter("parameterName", "string", "Parameter name to set", isRequired: true)]
 [SkillParameter("value", "string", "Value to set", isRequired: true)]
+[SkillParameter("source", "string",
+    "'element_ids' (default) to use elementIds parameter, 'selected' to use currently selected elements in Revit.",
+    isRequired: false, allowedValues: new[] { "element_ids", "selected" })]
 public class BatchModifySkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -17,27 +23,39 @@ public class BatchModifySkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
+        var source = parameters.GetValueOrDefault("source")?.ToString() ?? "element_ids";
         var idsStr = parameters.GetValueOrDefault("elementIds")?.ToString();
         var paramName = parameters.GetValueOrDefault("parameterName")?.ToString();
         var valueStr = parameters.GetValueOrDefault("value")?.ToString();
 
-        if (string.IsNullOrWhiteSpace(idsStr))
-            return SkillResult.Fail("elementIds is required.");
         if (string.IsNullOrWhiteSpace(paramName))
             return SkillResult.Fail("parameterName is required.");
         if (valueStr is null)
             return SkillResult.Fail("value is required.");
 
-        var idStrings = idsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var elementIds = new List<int>();
-        foreach (var s in idStrings)
+        var elementIds = new List<long>();
+
+        if (source == "selected")
         {
-            if (int.TryParse(s, out var id))
-                elementIds.Add(id);
+            var selIds = context.GetCurrentSelectionIds();
+            if (selIds is null || selIds.Count == 0)
+                return SkillResult.Fail("No elements currently selected in Revit.");
+            elementIds.AddRange(selIds);
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(idsStr))
+                return SkillResult.Fail("elementIds is required when source is 'element_ids'.");
+
+            foreach (var s in idsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (long.TryParse(s, out var id))
+                    elementIds.Add(id);
+            }
         }
 
         if (elementIds.Count == 0)
-            return SkillResult.Fail("No valid element IDs found in elementIds.");
+            return SkillResult.Fail("No valid element IDs resolved.");
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -51,7 +69,7 @@ public class BatchModifySkill : ISkill
 
             foreach (var id in elementIds)
             {
-                var element = document.GetElement(new ElementId((long)id));
+                var element = document.GetElement(new ElementId(id));
                 if (element is null)
                 {
                     failedCount++;

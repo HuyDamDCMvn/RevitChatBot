@@ -3,9 +3,12 @@ import { bridge } from '../services/bridge';
 import {
   ActionPlanData,
   ChatMessage,
+  CodeGenModelSuggestData,
   ImageAttachment,
   InstalledModelInfo,
   MessageTypes,
+  ModelPullCompleteData,
+  ModelPullProgressData,
   SkillInfo,
 } from '../types/messages';
 
@@ -19,6 +22,9 @@ export function useRevitBridge() {
   const [thinkingText, setThinkingText] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string>('');
   const [installedModels, setInstalledModels] = useState<InstalledModelInfo[]>([]);
+  const [codeGenSuggest, setCodeGenSuggest] = useState<CodeGenModelSuggestData | null>(null);
+  const [pullProgress, setPullProgress] = useState<ModelPullProgressData | null>(null);
+  const [isPulling, setIsPulling] = useState(false);
   const isConnected = bridge.isConnected;
   const pendingSkillRef = useRef<string | null>(null);
   const streamIdRef = useRef<string | null>(null);
@@ -199,6 +205,31 @@ export function useRevitBridge() {
           break;
         }
 
+        case MessageTypes.CODEGEN_MODEL_SUGGEST: {
+          const suggestData = msg.data as CodeGenModelSuggestData | undefined;
+          if (suggestData) setCodeGenSuggest(suggestData);
+          break;
+        }
+
+        case MessageTypes.MODEL_PULL_PROGRESS: {
+          const progressData = msg.data as ModelPullProgressData | undefined;
+          if (progressData) {
+            setPullProgress(progressData);
+            setIsPulling(true);
+          }
+          break;
+        }
+
+        case MessageTypes.MODEL_PULL_COMPLETE: {
+          const completeData = msg.data as ModelPullCompleteData | undefined;
+          setPullProgress(null);
+          setIsPulling(false);
+          if (!completeData?.cancelled) {
+            setCodeGenSuggest(null);
+          }
+          break;
+        }
+
         case MessageTypes.ERROR:
           setThinkingText(null);
           if (streamIdRef.current) streamIdRef.current = null;
@@ -247,6 +278,10 @@ export function useRevitBridge() {
     setIsLoading(false);
   }, []);
 
+  const dismissCodeGenSuggest = useCallback(() => {
+    setCodeGenSuggest(null);
+  }, []);
+
   return {
     messages,
     isLoading,
@@ -255,7 +290,11 @@ export function useRevitBridge() {
     thinkingText,
     activeModel,
     installedModels,
+    codeGenSuggest,
+    pullProgress,
+    isPulling,
     sendMessage,
     clearMessages,
+    dismissCodeGenSuggest,
   };
 }

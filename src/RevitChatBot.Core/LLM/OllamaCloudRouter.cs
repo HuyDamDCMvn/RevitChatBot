@@ -3,14 +3,14 @@ using RevitChatBot.Core.Models;
 namespace RevitChatBot.Core.LLM;
 
 /// <summary>
-/// Routes LLM requests between local Ollama and Ollama Cloud based on task complexity.
-/// Cloud is used for: code generation retries, multi-step reasoning, compliance checking.
-/// Falls back to local if cloud is unavailable.
+/// Routes LLM requests between local Ollama, local CodeGen model, and Ollama Cloud
+/// based on task complexity. Priority: CodeGen model (local, free) → Cloud → Local fallback.
 /// </summary>
 public class OllamaCloudRouter
 {
     private readonly OllamaService _localService;
     private OllamaService? _cloudService;
+    private OllamaService? _codeGenService;
     private OllamaOptions _options;
 
     private static readonly HashSet<string> HeavyReasoningSkills =
@@ -23,6 +23,7 @@ public class OllamaCloudRouter
     ];
 
     public bool IsCloudAvailable => _cloudService != null;
+    public bool IsCodeGenModelAvailable => _codeGenService != null;
     public string ActiveEndpoint { get; private set; } = "local";
 
     public OllamaCloudRouter(OllamaService localService)
@@ -30,6 +31,7 @@ public class OllamaCloudRouter
         _localService = localService;
         _options = localService.GetCurrentOptions();
         TryInitializeCloud();
+        TryInitializeCodeGen();
     }
 
     /// <summary>
@@ -58,7 +60,40 @@ public class OllamaCloudRouter
     }
 
     /// <summary>
+    /// Initialize or reinitialize the dedicated local CodeGen model client.
+    /// Uses the same Ollama server but with a code-specialized model and lower temperature.
+    /// </summary>
+    public void TryInitializeCodeGen()
+    {
+        _options = _localService.GetCurrentOptions();
+
+        if (string.IsNullOrWhiteSpace(_options.CodeGenModel))
+        {
+            _codeGenService?.Dispose();
+            _codeGenService = null;
+            return;
+        }
+
+        if (_codeGenService != null)
+        {
+            _codeGenService.Dispose();
+            _codeGenService = null;
+        }
+
+        _codeGenService = new OllamaService(new OllamaOptions
+        {
+            BaseUrl = _options.BaseUrl,
+            Model = _options.CodeGenModel,
+            Temperature = 0.1,
+            NumCtx = _options.NumCtx,
+            KeepAlive = "5m",
+            Think = _options.Think
+        });
+    }
+
+    /// <summary>
     /// Route a chat request to the appropriate endpoint based on complexity signals.
+    /// Priority: CodeGen model (for code tasks) → Cloud (for heavy reasoning) → Local.
     /// </summary>
     public async Task<ChatMessage> ChatWithRoutingAsync(
         List<ChatMessage> messages,
@@ -66,6 +101,19 @@ public class OllamaCloudRouter
         ComplexityHint hint,
         CancellationToken ct = default)
     {
+        if (_codeGenService != null && hint.IsCodeGenTask)
+        {
+            try
+            {
+                ActiveEndpoint = $"local-codegen ({_options.CodeGenModel})";
+                return await _codeGenService.ChatAsync(messages, tools, cancellationToken: ct);
+            }
+            catch
+            {
+                ActiveEndpoint = "local (codegen fallback)";
+            }
+        }
+
         if (_cloudService != null && ShouldUseCloud(hint))
         {
             try
@@ -109,6 +157,7 @@ public class ComplexityHint
 {
     public ComplexityLevel EstimatedComplexity { get; set; } = ComplexityLevel.Low;
     public bool IsCodeGenRetry { get; set; }
+    public bool IsCodeGenTask { get; set; }
     public int ReActStep { get; set; }
     public List<string>? ActiveSkills { get; set; }
     public bool ForceLocal { get; set; }

@@ -81,6 +81,20 @@ public class WebViewBridge : IDisposable
     private CodeGenKnowledgeEnricher? _codeGenKnowledgeEnricher;
     private SkillKnowledgeRecipeStore? _recipeStore;
     private ContextUsageTracker? _contextUsageTracker;
+    private LearningModuleHub? _learningHub;
+    private CodeAutoFixer? _codeAutoFixer;
+    private OllamaCloudRouter? _cloudRouter;
+    private CancellationTokenSource? _pullCts;
+
+    private static readonly (string Name, string Description, string MinVram)[] RecommendedCodeGenModels =
+    [
+        ("qwen2.5-coder:32b-instruct-q4_K_M", "Best quality, 20GB+ VRAM", "20GB"),
+        ("qwen2.5-coder:14b",                  "Great balance, 10GB+ VRAM", "10GB"),
+        ("deepseek-coder-v2:16b",              "Strong reasoning, 12GB+ VRAM", "12GB"),
+        ("qwen2.5-coder:7b",                   "Good for 8GB VRAM",  "6GB"),
+        ("codellama:13b",                       "Solid, 10GB+ VRAM",  "10GB"),
+        ("qwen2.5-coder:3b",                   "Lightweight, any GPU", "3GB"),
+    ];
 
     public WebViewBridge(WebView2 webView, RevitEventHandler eventHandler, BridgeInitData initData)
     {
@@ -94,12 +108,15 @@ public class WebViewBridge : IDisposable
         _contextCache = _initData.ContextCache;
 
         _ollamaService = new OllamaService();
+        _cloudRouter = new OllamaCloudRouter(_ollamaService);
         var skillRegistry = new SkillRegistry();
         var skillContext = new SkillContext
         {
             RevitDocument = _initData.Document,
             RevitApiInvoker = async (action) =>
                 await _eventHandler.ExecuteAsync(doc => action(doc)),
+            RevitUIInvoker = async (action) =>
+                await _eventHandler.ExecuteWithUIAsync(uiDoc => action(uiDoc)),
             Extra = { ["contextCache"] = _contextCache }
         };
         var skillExecutor = new SkillExecutor(skillRegistry, skillContext);
@@ -130,12 +147,16 @@ public class WebViewBridge : IDisposable
         skillContext.SendToUI = (type, content, data) =>
             SendToUI(new BridgeMessage { Type = type, Content = content, Data = data });
 
+        skillContext.Extra["skill_descriptors"] = skillRegistry.GetAllDescriptors().ToList();
+
         _skillKnowledgeIndex?.IndexFromRegistry(skillRegistry);
 
         _memoryManager = InitializeMemory(_ollamaService, contextManager);
         if (_memoryManager != null)
             contextManager.Register(new MemoryContextProvider(_memoryManager));
         InitializeSelfTraining(skillRegistry, skillExecutor);
+
+        WireCrossLearningSubscriptions();
 
         _chatSession = new ChatSessionV2(
             _ollamaService, skillRegistry, skillExecutor, contextManager,
@@ -168,7 +189,8 @@ public class WebViewBridge : IDisposable
             dynamicExamplesLibrary: _dynamicExamplesLibrary,
             codeGenKnowledgeEnricher: _codeGenKnowledgeEnricher,
             recipeStore: _recipeStore,
-            contextUsageTracker: _contextUsageTracker);
+            contextUsageTracker: _contextUsageTracker,
+            hub: _learningHub);
 
         _chatSession.OnAgentStep += step =>
         {
@@ -274,6 +296,7 @@ public class WebViewBridge : IDisposable
 
         _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         _ = AutoDetectModelAsync();
+        _ = CheckCodeGenModelAsync();
         _ = InitializeKnowledgeAsync();
         _ = InitializeMemoryAsync();
         _ = InitializeCodeGenModulesAsync();
@@ -283,7 +306,7 @@ public class WebViewBridge : IDisposable
         _ = InitializeCalcStoreAsync();
     }
 
-    private static void RegisterMEPComponents(
+    private void RegisterMEPComponents(
         SkillRegistry registry,
         ContextManager contextManager)
     {
@@ -298,7 +321,19 @@ public class WebViewBridge : IDisposable
         {
             contextManager.Register(new MEP.Context.ProjectInfoProvider());
             contextManager.Register(new MEP.Context.ActiveViewProvider());
-            contextManager.Register(new MEP.Context.SelectedElementsProvider());
+
+            var selectionProvider = new MEP.Context.SelectedElementsProvider
+            {
+                GetSelection = () =>
+                {
+                    var ids = _contextCache?.CurrentSelection?.ElementIds;
+                    if (ids is null || ids.Count == 0)
+                        return Array.Empty<Autodesk.Revit.DB.ElementId>();
+                    return ids.Select(id => new Autodesk.Revit.DB.ElementId(id)).ToList();
+                }
+            };
+            contextManager.Register(selectionProvider);
+
             contextManager.Register(new MEP.Context.MEPSystemProvider());
             contextManager.Register(new MEP.Context.RoomSpaceProvider());
             contextManager.Register(new MEP.Context.SystemDetailProvider());
@@ -361,7 +396,7 @@ public class WebViewBridge : IDisposable
             _codeGenLibrary = new CodeGenLibrary(Path.Combine(codegenDir, "codegen_library.json"));
             _dynamicSkillRegistry = new DynamicSkillRegistry(
                 Path.Combine(codegenDir, "dynamic_skills.json"), _codeExecutor, registry);
-            _patternLearning = new CodePatternLearning(Path.Combine(codegenDir, "patterns.json"));
+            _patternLearning = new CodePatternLearning(Path.Combine(codegenDir, "patterns.json"), _learningHub);
 
             _codeTemplateStore = new KnowledgeCodeTemplateStore();
             _dynamicExamplesLibrary = new DynamicCodeExamplesLibrary(
@@ -371,9 +406,19 @@ public class WebViewBridge : IDisposable
                 Path.Combine(codegenDir, "recipes.json"));
 
             _skillKnowledgeIndex = new SkillKnowledgeIndex();
+            _codeAutoFixer = new CodeAutoFixer(compiler);
+            _codeExecutor.SetAutoFixer(_codeAutoFixer);
 
-            var skill = new DynamicCodeSkill(_codeExecutor, _codeGenLibrary, _dynamicSkillRegistry, _patternLearning);
+            var skill = new DynamicCodeSkill(
+                _codeExecutor, _codeGenLibrary, _dynamicSkillRegistry, _patternLearning,
+                _learningHub, _codeAutoFixer);
             registry.Register(skill);
+
+            _learningHub?.Register("CodeGenLibrary", _codeGenLibrary);
+            _learningHub?.Register("PatternLearning", _patternLearning);
+            _learningHub?.Register("DynamicCodeExamples", _dynamicExamplesLibrary);
+            _learningHub?.Register("RecipeStore", _recipeStore);
+            _learningHub?.Register("SkillKnowledgeIndex", _skillKnowledgeIndex);
         }
         catch { }
     }
@@ -474,9 +519,14 @@ public class WebViewBridge : IDisposable
             var cortexDir = Path.Combine(addinDir, "learning_cortex");
             Directory.CreateDirectory(cortexDir);
 
-            _learningCortex = new LearningCortex(cortexDir);
-            _failureRecovery = new FailureRecoveryLearner(cortexDir);
+            _learningHub = new LearningModuleHub();
+            _failureRecovery = new FailureRecoveryLearner(cortexDir, _learningHub);
             _contextUsageTracker = new ContextUsageTracker(cortexDir);
+            _learningCortex = new LearningCortex(cortexDir, _failureRecovery, _learningHub);
+
+            _learningHub.Register("LearningCortex", _learningCortex);
+            _learningHub.Register("FailureRecovery", _failureRecovery);
+            _learningHub.Register("ContextUsageTracker", _contextUsageTracker);
         }
         catch { }
     }
@@ -518,6 +568,398 @@ public class WebViewBridge : IDisposable
             skillContext.Extra["calc_preference_store"] = _calcPreferenceStore;
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Wire bidirectional hub subscriptions for ALL learning/codegen modules.
+    /// Ensures every module both receives AND provides data through the event bus.
+    /// </summary>
+    private void WireCrossLearningSubscriptions()
+    {
+        if (_learningHub is null) return;
+
+        // ═══════════════════════════════════════════════════════
+        // 1. REGISTER all modules not yet in hub
+        // ═══════════════════════════════════════════════════════
+        if (_dynamicGlossary is not null)
+            _learningHub.Register("DynamicGlossary", _dynamicGlossary);
+        if (_vizLearner is not null)
+            _learningHub.Register("VisualFeedbackLearner", _vizLearner);
+        if (_vizComposer is not null)
+            _learningHub.Register("VisualWorkflowComposer", _vizComposer);
+        if (_codeTemplateStore is not null)
+            _learningHub.Register("KnowledgeCodeTemplateStore", _codeTemplateStore);
+        if (_codeGenKnowledgeEnricher is not null)
+            _learningHub.Register("CodeGenKnowledgeEnricher", _codeGenKnowledgeEnricher);
+        if (_fewShotLearning is not null)
+            _learningHub.Register("FewShotLearning", _fewShotLearning);
+        if (_interactionRecorder is not null)
+            _learningHub.Register("InteractionRecorder", _interactionRecorder);
+        if (_improvementStore is not null)
+            _learningHub.Register("ImprovementStore", _improvementStore);
+
+        // ═══════════════════════════════════════════════════════
+        // 2. skill_registered → reindex
+        // ═══════════════════════════════════════════════════════
+        if (_skillKnowledgeIndex is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.SkillRegistered], _ =>
+            {
+                try { _skillKnowledgeIndex.RebuildIndex(); }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 3. codegen_success / codegen_failure → cross-module learning
+        // ═══════════════════════════════════════════════════════
+        if (_patternLearning is not null)
+        {
+            _learningHub.Subscribe(
+                [LearningEventTypes.CodeGenSuccess, LearningEventTypes.CodeGenFailure], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null || evt.Source == "DynamicCodeSkill") return;
+                if (evt.EventType == LearningEventTypes.CodeGenSuccess)
+                    _patternLearning.RecordSuccess(data.Code, data.Query, data.ExecutionMs);
+                else
+                    _patternLearning.RecordFailure(data.Code, data.Error ?? "");
+            });
+        }
+
+        if (_codeGenLibrary is not null)
+        {
+            _learningHub.Subscribe(
+                [LearningEventTypes.CodeGenSuccess, LearningEventTypes.CodeGenFailure], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null || evt.Source == "DynamicCodeSkill") return;
+                try
+                {
+                    if (evt.EventType == LearningEventTypes.CodeGenSuccess)
+                        _codeGenLibrary.RecordSuccess(data.Query, data.Code, "", data.ExecutionMs);
+                    else
+                        _codeGenLibrary.RecordFailure(data.Query, data.Code, data.Error ?? "");
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        if (_dynamicExamplesLibrary is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null) return;
+                try
+                {
+                    _dynamicExamplesLibrary.LearnFromSuccess(
+                        data.Code, data.Query, data.Query, null, 0);
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        if (_dynamicGlossary is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null) return;
+                try
+                {
+                    int added = 0;
+                    foreach (var api in data.ApiPatternsUsed)
+                    {
+                        _dynamicGlossary.AddTerm(api, $"Revit API: {api}");
+                        added++;
+                    }
+                    if (added > 0)
+                    {
+                        _learningHub.Publish(new LearningEvent(
+                            "DynamicGlossary",
+                            LearningEventTypes.GlossaryUpdated,
+                            new { TermsAdded = added, Source = "codegen" }));
+                    }
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        if (_failureRecovery is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CodeGenFailure], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null) return;
+                try
+                {
+                    _failureRecovery.RecordFailure(
+                        "execute_revit_code", null, data.Error ?? "codegen failure");
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        if (_fewShotLearning is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null) return;
+                try
+                {
+                    _fewShotLearning.RecordSuccess(
+                        data.Query, "execute_revit_code",
+                        new Dictionary<string, object?> { ["code"] = data.Code });
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 4. plan_completed → multi-module fan-out
+        // ═══════════════════════════════════════════════════════
+        if (_contextUsageTracker is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            {
+                try
+                {
+                    var adjustments = _contextUsageTracker.GetPriorityAdjustments();
+                    if (adjustments.Count > 0)
+                    {
+                        _learningHub.Publish(new LearningEvent(
+                            "ContextUsageTracker",
+                            LearningEventTypes.ContextUsed,
+                            adjustments));
+                    }
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        if (_compositeEngine is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            {
+                try
+                {
+                    var candidates = _compositeEngine.DiscoverCandidates(minUseCount: 3);
+                    foreach (var c in candidates.Take(2))
+                    {
+                        if (_compositeEngine.PromoteToCompositeSkill(c))
+                        {
+                            _learningHub.Publish(new LearningEvent(
+                                "CompositeSkillEngine",
+                                LearningEventTypes.CompositeDiscovered,
+                                new { c.SuggestedName, c.SuggestedDescription, c.UsageCount }));
+                        }
+                    }
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        if (_recipeStore is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            {
+                var data = evt.GetData<PlanCompletedData>();
+                if (data is null || data.SkillsUsed.Count == 0) return;
+                try
+                {
+                    var frequent = _recipeStore.DiscoverFrequentRecipes(minUseCount: 2);
+                    if (frequent.Count > 0)
+                        _ = _recipeStore.SaveAsync(CancellationToken.None);
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        if (_improvementStore is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            {
+                var data = evt.GetData<PlanCompletedData>();
+                if (data is null) return;
+                try
+                {
+                    _improvementStore.GetImprovementHints(data.Intent ?? "unknown");
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 5. composite_discovered → reindex + recipe sync
+        // ═══════════════════════════════════════════════════════
+        if (_skillKnowledgeIndex is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CompositeDiscovered], _ =>
+            {
+                try { _skillKnowledgeIndex.RebuildIndex(); }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 6. skill_failure / skill_recovery → visual + correlator
+        // ═══════════════════════════════════════════════════════
+        if (_vizLearner is not null)
+        {
+            _learningHub.Subscribe(
+                [LearningEventTypes.SkillFailure, LearningEventTypes.SkillRecovery], evt =>
+            {
+                try
+                {
+                    if (evt.EventType == LearningEventTypes.SkillRecovery)
+                    {
+                        var data = evt.GetData<SkillRecoveryData>();
+                        if (data != null)
+                            _vizLearner.RecordEffectiveness(
+                                data.RecoverySkill, VisualizationFeedback.Positive);
+                    }
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 7. context_used → ContextWindowOptimizer
+        // ═══════════════════════════════════════════════════════
+        if (_contextOptimizer is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.ContextUsed], evt =>
+            {
+                var adjustments = evt.GetData<Dictionary<string, double>>();
+                if (adjustments is not null)
+                {
+                    try { _contextOptimizer.UpdateLearnedPriorities(adjustments); }
+                    catch { /* non-critical */ }
+                }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 8. Sync learned fixes: CodePatternLearning → CodeAutoFixer
+        // ═══════════════════════════════════════════════════════
+        if (_codeAutoFixer is not null && _patternLearning is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            {
+                if (evt.Source != "PatternLearning") return;
+                try
+                {
+                    var fixes = _patternLearning.GetConfirmedFixes();
+                    if (fixes.Count > 0)
+                        _codeAutoFixer.UpdateLearnedFixes(fixes);
+                }
+                catch { /* non-critical */ }
+            });
+
+            try
+            {
+                var existingFixes = _patternLearning.GetConfirmedFixes();
+                if (existingFixes.Count > 0)
+                    _codeAutoFixer.UpdateLearnedFixes(existingFixes);
+            }
+            catch { /* non-critical */ }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 9. plan_completed → InteractionRecorder (hub-driven record)
+        // ═══════════════════════════════════════════════════════
+        if (_interactionRecorder is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            {
+                var data = evt.GetData<PlanCompletedData>();
+                if (data is null) return;
+                try
+                {
+                    _interactionRecorder.RecordFromEvent(data);
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 10. codegen_success → KnowledgeCodeTemplateStore (auto-extract templates)
+        // ═══════════════════════════════════════════════════════
+        if (_codeTemplateStore is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null || data.Code.Length < 50) return;
+                try
+                {
+                    _codeTemplateStore.AddTemplate(
+                        data.Query.Length > 60 ? data.Query[..60] : data.Query,
+                        data.Code,
+                        data.Intent,
+                        data.Category);
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 11. plan_completed → VisualWorkflowComposer (discover visual patterns)
+        // ═══════════════════════════════════════════════════════
+        if (_vizComposer is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            {
+                var data = evt.GetData<PlanCompletedData>();
+                if (data is null || data.SkillsUsed.Count < 2) return;
+                try
+                {
+                    _vizComposer.DiscoverVisualWorkflows();
+                }
+                catch { /* non-critical */ }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 12. Register PlanReplayStore + SelfEvaluator
+        // ═══════════════════════════════════════════════════════
+        if (_planReplayStore is not null)
+            _learningHub.Register("PlanReplayStore", _planReplayStore);
+        if (_selfEvaluator is not null)
+            _learningHub.Register("SelfEvaluator", _selfEvaluator);
+        if (_selfTrainingScheduler is not null)
+            _learningHub.Register("SelfTrainingScheduler", _selfTrainingScheduler);
+
+        // ═══════════════════════════════════════════════════════
+        // 13. knowledge_indexed → CodeGenKnowledgeEnricher + CodeTemplateStore
+        // ═══════════════════════════════════════════════════════
+        if (_codeTemplateStore is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.KnowledgeIndexed], _ =>
+            {
+                // New knowledge means potential new code templates
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 14. codegen_success → RecipeStore (enrich with code patterns)
+        // ═══════════════════════════════════════════════════════
+        if (_recipeStore is not null)
+        {
+            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            {
+                var data = evt.GetData<CodeGenEventData>();
+                if (data is null) return;
+                try
+                {
+                    _recipeStore.EnrichWithCodePattern(
+                        data.Query, data.Code, data.Intent, data.Category);
+                }
+                catch { /* non-critical */ }
+            });
+        }
     }
 
     private void WireVisualizationLearning()
@@ -605,7 +1047,11 @@ public class WebViewBridge : IDisposable
                 improvementStore: _improvementStore,
                 learningCortex: _learningCortex,
                 failureRecovery: _failureRecovery,
-                contextUsageTracker: _contextUsageTracker);
+                contextUsageTracker: _contextUsageTracker,
+                recipeStore: _recipeStore,
+                dynamicExamplesLibrary: _dynamicExamplesLibrary,
+                codeTemplateStore: _codeTemplateStore,
+                hub: _learningHub);
 
             var gapAnalyzer = _interactionRecorder != null
                 ? new SkillGapAnalyzer(_ollamaService!, skillRegistry, _interactionRecorder)
@@ -622,7 +1068,12 @@ public class WebViewBridge : IDisposable
                 discoveryAgent: discoveryAgent,
                 persistenceManager: _persistenceManager,
                 logger: _agentLogger,
-                recipeStore: _recipeStore);
+                recipeStore: _recipeStore,
+                hub: _learningHub,
+                skillKnowledgeIndex: _skillKnowledgeIndex);
+
+            _learningHub?.Register("CompositeEngine", _compositeEngine!);
+            _learningHub?.Register("PersistenceManager", _persistenceManager!);
 
             if (_knowledgeManager != null && _ollamaService != null)
             {
@@ -945,6 +1396,18 @@ public class WebViewBridge : IDisposable
                 case BridgeMessageTypes.RequestSettings:
                     await HandleRequestSettingsAsync();
                     break;
+
+                case BridgeMessageTypes.ModelPullRequest:
+                    await HandleModelPullAsync(message.Data);
+                    break;
+
+                case BridgeMessageTypes.ModelPullCancel:
+                    _pullCts?.Cancel();
+                    break;
+
+                case BridgeMessageTypes.CodeGenModelSet:
+                    HandleCodeGenModelSet(message.Data);
+                    break;
             }
         }
         catch (Exception ex)
@@ -1118,7 +1581,11 @@ public class WebViewBridge : IDisposable
             if (data.TryGetValue("logprobs", out var lp) && lp is not null
                 && bool.TryParse(lp.ToString(), out var lpVal))
                 opts.Logprobs = lpVal;
+            if (data.TryGetValue("codeGenModel", out var cgm) && cgm is string cgmStr)
+                opts.CodeGenModel = string.IsNullOrWhiteSpace(cgmStr) ? null : cgmStr;
         });
+
+        _cloudRouter?.TryInitializeCodeGen();
 
         try
         {
@@ -1221,6 +1688,167 @@ public class WebViewBridge : IDisposable
         });
     }
 
+    /// <summary>
+    /// Check if user has a dedicated CodeGen model. If not, suggest pulling one.
+    /// Auto-detects existing coder models before suggesting a download.
+    /// </summary>
+    private async Task CheckCodeGenModelAsync()
+    {
+        if (_ollamaService is null) return;
+        try
+        {
+            await Task.Delay(3000);
+
+            var models = await _ollamaService.ListModelsAsync();
+            var opts = _ollamaService.GetCurrentOptions();
+
+            if (!string.IsNullOrEmpty(opts.CodeGenModel) &&
+                models.Any(m => m.Name.Equals(opts.CodeGenModel, StringComparison.OrdinalIgnoreCase)))
+            {
+                _cloudRouter?.TryInitializeCodeGen();
+                return;
+            }
+
+            var existingCoder = models.FirstOrDefault(m =>
+                m.Name.Contains("coder", StringComparison.OrdinalIgnoreCase) ||
+                m.Name.Contains("codellama", StringComparison.OrdinalIgnoreCase) ||
+                m.Name.Contains("deepseek-coder", StringComparison.OrdinalIgnoreCase));
+
+            if (existingCoder is not null)
+            {
+                _ollamaService.UpdateOptions(o => o.CodeGenModel = existingCoder.Name);
+                _cloudRouter?.TryInitializeCodeGen();
+                SendToUI(new BridgeMessage
+                {
+                    Type = BridgeMessageTypes.AssistantMessage,
+                    Content = $"🔧 CodeGen model detected: **{existingCoder.Name}** — " +
+                              "code generation will use this specialized model for better accuracy."
+                });
+                return;
+            }
+
+            var suggestOptions = RecommendedCodeGenModels.Select(r => new Dictionary<string, object?>
+            {
+                ["name"] = r.Name,
+                ["description"] = r.Description,
+                ["minVram"] = r.MinVram,
+                ["installed"] = models.Any(m =>
+                    m.Name.Equals(r.Name, StringComparison.OrdinalIgnoreCase))
+            }).ToList();
+
+            var suggested = RecommendedCodeGenModels[3];
+
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.CodeGenModelSuggest,
+                Content = $"Nâng cấp CodeGen? Model **{suggested.Name}** " +
+                          "sẽ sinh code Revit API chính xác hơn nhiều so với model chat thường.",
+                Data = new Dictionary<string, object?>
+                {
+                    ["modelName"] = suggested.Name,
+                    ["description"] = suggested.Description,
+                    ["minVram"] = suggested.MinVram,
+                    ["options"] = suggestOptions
+                }
+            });
+        }
+        catch { }
+    }
+
+    private async Task HandleModelPullAsync(Dictionary<string, object?>? data)
+    {
+        if (data is null || _ollamaService is null) return;
+        if (!data.TryGetValue("modelName", out var nameObj) || nameObj is not string modelName)
+            return;
+
+        var setAsCodeGen = data.TryGetValue("setAsCodeGen", out var flag)
+            && bool.TryParse(flag?.ToString(), out var flagVal) && flagVal;
+
+        _pullCts?.Cancel();
+        _pullCts = new CancellationTokenSource();
+        var ct = _pullCts.Token;
+
+        try
+        {
+            await foreach (var progress in _ollamaService.PullModelAsync(modelName, ct))
+            {
+                SendToUI(new BridgeMessage
+                {
+                    Type = BridgeMessageTypes.ModelPullProgress,
+                    Content = progress.Status,
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["modelName"] = modelName,
+                        ["total"] = progress.Total,
+                        ["completed"] = progress.Completed,
+                        ["percent"] = Math.Round(progress.ProgressPercent, 1)
+                    }
+                });
+
+                if (progress.IsComplete)
+                {
+                    if (setAsCodeGen)
+                    {
+                        _ollamaService.UpdateOptions(o => o.CodeGenModel = modelName);
+                        _cloudRouter?.TryInitializeCodeGen();
+                    }
+
+                    SendToUI(new BridgeMessage
+                    {
+                        Type = BridgeMessageTypes.ModelPullComplete,
+                        Content = $"Model **{modelName}** installed successfully!" +
+                                  (setAsCodeGen ? " CodeGen will now use this model." : ""),
+                        Data = new Dictionary<string, object?>
+                        {
+                            ["modelName"] = modelName,
+                            ["setAsCodeGen"] = setAsCodeGen
+                        }
+                    });
+
+                    var models = await _ollamaService.ListModelsAsync();
+                    SendModelSync(_ollamaService.GetCurrentOptions().Model, models);
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.ModelPullComplete,
+                Content = $"Pull cancelled for {modelName}.",
+                Data = new Dictionary<string, object?> { ["cancelled"] = true }
+            });
+        }
+        catch (Exception ex)
+        {
+            SendToUI(new BridgeMessage
+            {
+                Type = BridgeMessageTypes.Error,
+                Content = $"Failed to pull {modelName}: {ex.Message}"
+            });
+        }
+    }
+
+    private void HandleCodeGenModelSet(Dictionary<string, object?>? data)
+    {
+        if (data is null || _ollamaService is null) return;
+        if (!data.TryGetValue("modelName", out var nameObj) || nameObj is not string modelName)
+            return;
+
+        _ollamaService.UpdateOptions(o =>
+            o.CodeGenModel = string.IsNullOrWhiteSpace(modelName) ? null : modelName);
+        _cloudRouter?.TryInitializeCodeGen();
+
+        SendToUI(new BridgeMessage
+        {
+            Type = BridgeMessageTypes.AssistantMessage,
+            Content = string.IsNullOrWhiteSpace(modelName)
+                ? "CodeGen model cleared — using main chat model for code generation."
+                : $"🔧 CodeGen model set to **{modelName}**."
+        });
+    }
+
     private void SendToUI(BridgeMessage message)
     {
         var json = JsonSerializer.Serialize(message, _jsonOpts);
@@ -1236,6 +1864,8 @@ public class WebViewBridge : IDisposable
         _chatSession?.StopSelfTraining();
         _ = SaveStateAsync();
 
+        _pullCts?.Cancel();
+        _pullCts?.Dispose();
         _vizManager?.Dispose();
         _selfTrainingScheduler?.Dispose();
         _agentLogger?.Dispose();

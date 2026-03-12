@@ -28,6 +28,9 @@ namespace RevitChatBot.MEP.Skills.DataExchange;
     "Scope: 'active_view' to limit to elements visible in the current view, " +
     "'entire_model' to include all (default: entire_model)",
     isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
+[SkillParameter("source", "string",
+    "'all' (default) to export by category, 'selected' to export only currently selected elements in Revit.",
+    isRequired: false, allowedValues: new[] { "all", "selected" })]
 public class ExportToCsvSkill : ISkill
 {
     private static readonly Dictionary<string, BuiltInCategory[]> CategoryMap = new(StringComparer.OrdinalIgnoreCase)
@@ -61,28 +64,54 @@ public class ExportToCsvSkill : ISkill
         var systemFilter = parameters.GetValueOrDefault("system_filter")?.ToString();
         var fileName = parameters.GetValueOrDefault("file_name")?.ToString();
         var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
+        var source = parameters.GetValueOrDefault("source")?.ToString() ?? "all";
 
-        if (!CategoryMap.TryGetValue(category, out var builtInCats))
+        List<long>? selectionIds = null;
+        if (source == "selected")
+        {
+            selectionIds = context.GetCurrentSelectionIds();
+            if (selectionIds is null || selectionIds.Count == 0)
+                return SkillResult.Fail("No elements currently selected in Revit.");
+        }
+        else if (!CategoryMap.TryGetValue(category, out _))
+        {
             return SkillResult.Fail($"Unknown category '{category}'.");
+        }
+
+        CategoryMap.TryGetValue(category, out var builtInCats);
 
         var requestedParams = string.IsNullOrWhiteSpace(paramList)
             ? null
             : paramList.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var capturedSelectionIds = selectionIds;
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
             var elementService = new RevitElementService();
 
             var elements = new List<Element>();
-            foreach (var bic in builtInCats)
+
+            if (source == "selected" && capturedSelectionIds is not null)
             {
-                elements.AddRange(
-                    ViewScopeHelper.CreateCollector(document, scope)
-                        .OfCategory(bic)
-                        .WhereElementIsNotElementType()
-                        .ToList());
+                foreach (var id in capturedSelectionIds)
+                {
+                    var elem = document.GetElement(new ElementId(id));
+                    if (elem is not null)
+                        elements.Add(elem);
+                }
+            }
+            else if (builtInCats is not null)
+            {
+                foreach (var bic in builtInCats)
+                {
+                    elements.AddRange(
+                        ViewScopeHelper.CreateCollector(document, scope)
+                            .OfCategory(bic)
+                            .WhereElementIsNotElementType()
+                            .ToList());
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(systemFilter))

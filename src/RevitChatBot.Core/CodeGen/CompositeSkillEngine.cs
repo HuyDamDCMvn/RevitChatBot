@@ -78,20 +78,49 @@ public class CompositeSkillEngine
         return true;
     }
 
+    private static readonly List<(string Name, string Description, string Chain)> BuiltInRecipes =
+    [
+        ("filter_then_modify", "Filter elements then batch-modify a parameter on matched results",
+            "advanced_filter → batch_modify(source=element_ids)"),
+        ("filter_then_map_table", "Filter elements then map data table values onto matched results",
+            "advanced_filter → map_data_table(source=element_ids)"),
+        ("export_edit_reimport", "Export elements to CSV, user edits externally, then reimport changes",
+            "export_to_csv → batch_update_from_csv"),
+        ("selection_export", "Export currently selected elements to CSV",
+            "export_to_csv(source=selected)"),
+        ("selection_modify", "Batch-modify parameters on currently selected elements",
+            "batch_modify(source=selected)"),
+        ("selection_highlight", "Highlight currently selected elements in 3D view",
+            "highlight_elements(source=selected)"),
+        ("selection_color", "Override color of currently selected elements",
+            "override_element_color(source=selected)"),
+        ("filter_then_color", "Filter elements then override their color in the active view",
+            "advanced_filter → override_element_color"),
+    ];
+
     /// <summary>
     /// Get a summary of composite skills available, for LLM context injection.
+    /// Includes both auto-discovered patterns and built-in recipe suggestions.
     /// </summary>
     public string GetCompositeSkillsSummary()
     {
-        var candidates = DiscoverCandidates(minUseCount: 2);
-        if (candidates.Count == 0) return "";
+        var lines = new List<string>();
 
-        var lines = new List<string> { "[composite_skill_patterns]" };
-        foreach (var c in candidates.Take(10))
+        var candidates = DiscoverCandidates(minUseCount: 2);
+        if (candidates.Count > 0)
         {
-            lines.Add($"  - {c.SuggestedName}: {c.SuggestedDescription} (used {c.UsageCount}x)");
-            lines.Add($"    chain: {string.Join(" → ", c.SkillChain.Select(s => s.SkillName))}");
+            lines.Add("[composite_skill_patterns] — Auto-discovered:");
+            foreach (var c in candidates.Take(10))
+            {
+                lines.Add($"  - {c.SuggestedName}: {c.SuggestedDescription} (used {c.UsageCount}x)");
+                lines.Add($"    chain: {string.Join(" → ", c.SkillChain.Select(s => s.SkillName))}");
+            }
         }
+
+        lines.Add("[built_in_workflow_recipes] — You can combine these skills:");
+        foreach (var (name, desc, chain) in BuiltInRecipes)
+            lines.Add($"  - {name}: {desc} → {chain}");
+
         return string.Join("\n", lines);
     }
 

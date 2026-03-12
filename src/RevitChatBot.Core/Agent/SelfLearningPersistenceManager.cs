@@ -23,6 +23,10 @@ public class SelfLearningPersistenceManager
     private readonly LearningCortex? _learningCortex;
     private readonly FailureRecoveryLearner? _failureRecovery;
     private readonly ContextUsageTracker? _contextUsageTracker;
+    private readonly SkillKnowledgeRecipeStore? _recipeStore;
+    private readonly DynamicCodeExamplesLibrary? _dynamicExamplesLibrary;
+    private readonly KnowledgeCodeTemplateStore? _codeTemplateStore;
+    private readonly LearningModuleHub? _hub;
 
     private int _changesSinceLastPersist;
     private const int PersistThreshold = 3;
@@ -40,7 +44,11 @@ public class SelfLearningPersistenceManager
         ImprovementStore? improvementStore = null,
         LearningCortex? learningCortex = null,
         FailureRecoveryLearner? failureRecovery = null,
-        ContextUsageTracker? contextUsageTracker = null)
+        ContextUsageTracker? contextUsageTracker = null,
+        SkillKnowledgeRecipeStore? recipeStore = null,
+        DynamicCodeExamplesLibrary? dynamicExamplesLibrary = null,
+        KnowledgeCodeTemplateStore? codeTemplateStore = null,
+        LearningModuleHub? hub = null)
     {
         _patternLearning = patternLearning;
         _dynamicSkills = dynamicSkills;
@@ -54,6 +62,10 @@ public class SelfLearningPersistenceManager
         _learningCortex = learningCortex;
         _failureRecovery = failureRecovery;
         _contextUsageTracker = contextUsageTracker;
+        _recipeStore = recipeStore;
+        _dynamicExamplesLibrary = dynamicExamplesLibrary;
+        _codeTemplateStore = codeTemplateStore;
+        _hub = hub;
     }
 
     /// <summary>
@@ -89,6 +101,9 @@ public class SelfLearningPersistenceManager
             if (_learningCortex != null) tasks.Add(_learningCortex.SaveAsync(ct));
             if (_failureRecovery != null) tasks.Add(_failureRecovery.SaveAsync(ct));
             if (_contextUsageTracker != null) tasks.Add(_contextUsageTracker.SaveAsync(ct));
+            if (_recipeStore != null) tasks.Add(_recipeStore.SaveAsync(ct));
+            if (_dynamicExamplesLibrary != null) tasks.Add(_dynamicExamplesLibrary.SaveAsync(ct));
+            if (_codeTemplateStore != null) tasks.Add(_codeTemplateStore.SaveAsync(ct));
 
             await Task.WhenAll(tasks);
         }
@@ -117,6 +132,9 @@ public class SelfLearningPersistenceManager
         if (_learningCortex != null) tasks.Add(_learningCortex.LoadAsync(ct));
         if (_failureRecovery != null) tasks.Add(_failureRecovery.LoadAsync(ct));
         if (_contextUsageTracker != null) tasks.Add(_contextUsageTracker.LoadAsync(ct));
+        if (_recipeStore != null) tasks.Add(_recipeStore.LoadAsync(ct));
+        if (_dynamicExamplesLibrary != null) tasks.Add(_dynamicExamplesLibrary.LoadAsync(ct));
+        if (_codeTemplateStore != null) tasks.Add(_codeTemplateStore.LoadAsync(ct));
 
         await Task.WhenAll(tasks);
     }

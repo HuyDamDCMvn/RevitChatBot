@@ -70,6 +70,25 @@ if (Test-Path $uiAssetsDir) {
     }
 }
 
+# Copy knowledge docs (non-PDF) into the package for RAG
+$knowledgeSrc = Join-Path $repoRoot "docs\knowledge"
+$knowledgeDst = Join-Path $addinDir "knowledge"
+if (Test-Path $knowledgeSrc) {
+    New-Item -ItemType Directory -Path $knowledgeDst -Force | Out-Null
+    $knowledgeFiles = Get-ChildItem $knowledgeSrc -Recurse -Include *.md,*.json,*.txt
+    foreach ($f in $knowledgeFiles) {
+        $relPath = $f.FullName.Substring($knowledgeSrc.Length + 1)
+        $destFile = Join-Path $knowledgeDst $relPath
+        $destDir = Split-Path $destFile -Parent
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+        Copy-Item $f.FullName $destFile -Force
+    }
+    $knowledgeCount = $knowledgeFiles.Count
+    Write-Host "  Included $knowledgeCount knowledge docs (RAG)" -ForegroundColor Gray
+}
+
 # Copy install script into package
 Copy-Item (Join-Path $repoRoot "scripts\install.ps1") $stagingDir -Force
 Copy-Item (Join-Path $repoRoot "scripts\uninstall.ps1") $stagingDir -Force

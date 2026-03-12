@@ -2,6 +2,42 @@
 
 All notable changes to RevitChatBot will be documented in this file.
 
+## [1.1.0] - 2026-03-12
+
+### Added
+
+- **Scope parameter** (`active_view` / `entire_model`) for 28 skills — query, check, coordination, and report skills now support scoping to active view or entire model for faster, targeted analysis.
+- **IOllamaService interface** — abstraction layer for LLM service, enabling cloud routing and testing.
+- **OllamaCloudRouter** — intelligent routing between local Ollama and cloud LLM providers.
+- **Enhanced SemanticSkillRouter** — improved embedding-based skill matching with keyword fallback and success-rate boosting (365+ lines of improvements).
+- **Expanded MepGlossary** — 186+ new bilingual MEP term mappings for better Vietnamese/English query understanding.
+- **FewShotIntentLibrary expansion** — 100+ new curated examples for more accurate intent resolution.
+- **InteractionRecorder enhancements** — richer interaction logging for self-training pipeline.
+- **Cursor development rules** — `.cursor/rules/revit-code-quality.mdc` for consistent AI-assisted development.
+
+### Improved
+
+- **WebViewBridge** — major refactoring (648 lines) for more robust React ↔ C# communication, better error handling, and streamlined initialization.
+- **RevitEventHandler** — new `ExecuteWithUIAsync` method for UIDocument operations (selection, view switching).
+- **AgentOrchestrator** — improved plan execution, better error recovery, and cross-learning event publishing.
+- **LearningCortex** — enhanced cross-module meta-analysis and failure pattern detection.
+- **CrossSkillCorrelator** — improved skill correlation discovery and persistence.
+- **FailureRecoveryLearner** — better recovery advice generation from failure patterns.
+- **CompositeSkillEngine** — smarter composite skill discovery and chain detection.
+- **DynamicCodeSkill** — better code generation context and auto-fix integration.
+- **AdvancedFilterSkill** — more flexible element filtering with scope support.
+- **BatchUpdateFromCsvSkill** — enhanced CSV import with better error handling.
+- **CheckClearanceSkill, CheckSlopeSkill, CheckVelocitySkill** — scope-aware with improved reporting.
+- **ClashDetectionSkill** — scope parameter and performance improvements.
+- **UI Settings Panel** — model auto-detection and backend/frontend settings sync.
+
+### Fixed
+
+- **avoid_clash** now supports same-category clashes and selected elements correctly.
+- **Auto-detect LLM models** — settings panel syncs available models between Ollama backend and UI.
+- **Release packaging** now includes RAG knowledge docs (md, json, txt) for out-of-the-box knowledge base.
+- **Deploy target** copies knowledge docs during Release build to Revit Addins folder.
+
 ## [1.0.0] - 2026-03-11
 
 ### Added

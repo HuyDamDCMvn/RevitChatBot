@@ -17,7 +17,8 @@ ui/revitchatbot-ui/dist/
 # IDE
 .idea/
 .vscode/
-.cursor/
+.cursor/*
+!.cursor/rules/
 *.swp
 *.swo
 

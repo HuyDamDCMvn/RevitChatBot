@@ -111,6 +111,34 @@ export interface WarningsDeltaData {
   isRegression: boolean;
 }
 
+export interface CodeGenModelOption {
+  name: string;
+  description: string;
+  minVram: string;
+  installed: boolean;
+}
+
+export interface CodeGenModelSuggestData {
+  modelName: string;
+  description: string;
+  minVram: string;
+  options: CodeGenModelOption[];
+}
+
+export interface ModelPullProgressData {
+  modelName: string;
+  status: string;
+  total: number;
+  completed: number;
+  percent: number;
+}
+
+export interface ModelPullCompleteData {
+  modelName: string;
+  setAsCodeGen?: boolean;
+  cancelled?: boolean;
+}
+
 export const MessageTypes = {
   USER_MESSAGE: 'user_message',
   ASSISTANT_MESSAGE: 'assistant_message',
@@ -142,4 +170,10 @@ export const MessageTypes = {
   VIEW_SNAPSHOT: 'view_snapshot',
   MODEL_SYNC: 'model_sync',
   REQUEST_SETTINGS: 'request_settings',
+  CODEGEN_MODEL_SUGGEST: 'codegen_model_suggest',
+  CODEGEN_MODEL_SET: 'codegen_model_set',
+  MODEL_PULL_REQUEST: 'model_pull_request',
+  MODEL_PULL_PROGRESS: 'model_pull_progress',
+  MODEL_PULL_COMPLETE: 'model_pull_complete',
+  MODEL_PULL_CANCEL: 'model_pull_cancel',
 } as const;

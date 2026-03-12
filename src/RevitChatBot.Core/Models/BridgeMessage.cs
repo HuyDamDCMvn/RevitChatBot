@@ -39,4 +39,10 @@ public static class BridgeMessageTypes
     public const string ViewSnapshot = "view_snapshot";
     public const string ModelSync = "model_sync";
     public const string RequestSettings = "request_settings";
+    public const string CodeGenModelSuggest = "codegen_model_suggest";
+    public const string CodeGenModelSet = "codegen_model_set";
+    public const string ModelPullRequest = "model_pull_request";
+    public const string ModelPullProgress = "model_pull_progress";
+    public const string ModelPullComplete = "model_pull_complete";
+    public const string ModelPullCancel = "model_pull_cancel";
 }

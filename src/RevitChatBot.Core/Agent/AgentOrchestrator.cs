@@ -65,6 +65,7 @@ public class AgentOrchestrator
     private readonly CodeGenKnowledgeEnricher? _codeGenKnowledgeEnricher;
     private readonly SkillKnowledgeRecipeStore? _recipeStore;
     private readonly ContextUsageTracker? _contextUsageTracker;
+    private readonly LearningModuleHub? _hub;
 
     private readonly WarningsDeltaTracker _warningsDeltaTracker = new();
     private readonly List<ChatMessage> _history = [];
@@ -85,7 +86,7 @@ public class AgentOrchestrator
         set => _visualFeedbackTracker = value;
     }
 
-    private const int MaxReActSteps = 8;
+    private const int MaxReActSteps = 12;
     private const int MaxRetryOnLowQuality = 1;
     private const int SelfEvalMinSteps = 2;
 
@@ -98,7 +99,28 @@ public class AgentOrchestrator
         "batch_modify",
         "avoid_clash",
         "split_duct_pipe",
-        "map_room_to_mep"
+        "map_room_to_mep",
+        "manage_revisions",
+        "batch_create_sheets",
+        "copy_view_to_sheet",
+        "save_restore_viewport",
+        "create_views_from_rooms",
+        "create_floors_from_rooms",
+        "set_crop_region",
+        "copy_elements_to_level",
+        "export_schedule_data",
+        "change_element_type",
+        "move_elements",
+        "load_family",
+        "mirror_elements",
+        "rotate_elements",
+        "workset_reassign",
+        "pin_unpin_elements",
+        "create_workset",
+        "create_callout_view",
+        "create_revision_cloud",
+        "create_text_note",
+        "manage_scope_box",
     ];
 
     public IReadOnlyList<ChatMessage> History => _history.AsReadOnly();
@@ -144,7 +166,8 @@ public class AgentOrchestrator
         DynamicCodeExamplesLibrary? dynamicExamplesLibrary = null,
         CodeGenKnowledgeEnricher? codeGenKnowledgeEnricher = null,
         SkillKnowledgeRecipeStore? recipeStore = null,
-        ContextUsageTracker? contextUsageTracker = null)
+        ContextUsageTracker? contextUsageTracker = null,
+        LearningModuleHub? hub = null)
     {
         _ollama = ollama;
         _skillRegistry = skillRegistry;
@@ -180,6 +203,7 @@ public class AgentOrchestrator
         _codeGenKnowledgeEnricher = codeGenKnowledgeEnricher;
         _recipeStore = recipeStore;
         _contextUsageTracker = contextUsageTracker;
+        _hub = hub;
     }
 
     public async Task<AgentPlan> ExecuteAsync(
@@ -599,6 +623,16 @@ public class AgentOrchestrator
                             _lastFailedSkillError ?? "", recoverySucceeded: true);
                         _learningCortex?.SkillCorrelator.RecordFailureRecovery(
                             _lastFailedSkillName, toolCall.FunctionName, recovered: true);
+
+                        _hub?.Publish(new LearningEvent("AgentOrchestrator",
+                            LearningEventTypes.SkillRecovery,
+                            new SkillRecoveryData
+                            {
+                                FailedSkill = _lastFailedSkillName,
+                                RecoverySkill = toolCall.FunctionName,
+                                FailureError = _lastFailedSkillError ?? ""
+                            }));
+
                         _lastFailedSkillName = null;
                         _lastFailedSkillError = null;
                     }
@@ -608,6 +642,15 @@ public class AgentOrchestrator
                     _failureRecovery.RecordFailure(
                         toolCall.FunctionName, toolCall.Arguments,
                         result.Message ?? "unknown error");
+
+                    _hub?.Publish(new LearningEvent("AgentOrchestrator",
+                        LearningEventTypes.SkillFailure,
+                        new SkillFailureData
+                        {
+                            SkillName = toolCall.FunctionName,
+                            Arguments = toolCall.Arguments,
+                            Error = result.Message ?? "unknown error"
+                        }));
 
                     _lastFailedSkillName = toolCall.FunctionName;
                     _lastFailedSkillError = result.Message;
@@ -719,6 +762,38 @@ public class AgentOrchestrator
             try
             {
                 _learningCortex?.Ingest(plan, analysis, _memory?.Analytics);
+            }
+            catch { /* non-critical */ }
+
+            // 5f1. Publish plan_completed for cross-module learning
+            try
+            {
+                var skillsUsed = plan.Steps
+                    .Where(s => s.Type == AgentStepType.Action && s.SkillName is not null)
+                    .Select(s => s.SkillName!)
+                    .ToList();
+
+                var codeGenCode = plan.Steps
+                    .FirstOrDefault(s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Action)
+                    ?.Parameters?.GetValueOrDefault("code")?.ToString();
+
+                var retrievedKnowledge = _contextManager.ContextCache?.Extra
+                    ?.GetValueOrDefault("retrieved_knowledge_sources") as List<string>;
+
+                _hub?.Publish(new LearningEvent("AgentOrchestrator",
+                    LearningEventTypes.PlanCompleted,
+                    new PlanCompletedData
+                    {
+                        Goal = plan.Goal,
+                        SkillsUsed = skillsUsed,
+                        Intent = analysis?.Intent,
+                        Category = analysis?.Category,
+                        StepCount = plan.Steps.Count,
+                        FinalAnswer = plan.FinalAnswer?.Length > 200
+                            ? plan.FinalAnswer[..200] : plan.FinalAnswer,
+                        CodeGenCode = codeGenCode,
+                        KnowledgeSources = retrievedKnowledge
+                    }));
             }
             catch { /* non-critical */ }
 
@@ -1048,6 +1123,14 @@ public class AgentOrchestrator
             }
             catch { /* non-critical */ }
         }
+
+        var codeGenInsights = _learningCortex?.GetCodeGenInsights();
+        if (!string.IsNullOrWhiteSpace(codeGenInsights))
+            parts.Add(codeGenInsights);
+
+        var recoveryContext = _failureRecovery?.BuildRecoveryContext();
+        if (!string.IsNullOrWhiteSpace(recoveryContext))
+            parts.Add(recoveryContext);
 
         return parts.Count > 0
             ? "--- CODEGEN SELF-LEARNING CONTEXT ---\n" + string.Join("\n\n", parts)

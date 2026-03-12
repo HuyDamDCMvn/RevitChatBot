@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RevitChatBot.Core.Learning;
 
 namespace RevitChatBot.Core.CodeGen;
 
@@ -6,16 +7,19 @@ namespace RevitChatBot.Core.CodeGen;
 /// Module 3: Learns from codegen history to improve future code generation.
 /// Tracks error patterns, successful API usage, and auto-generates
 /// additional error fixes and usage hints for the LLM.
+/// Bidirectional: subscribes to codegen events, publishes learned error fixes.
 /// </summary>
 public class CodePatternLearning
 {
     private readonly string _filePath;
+    private readonly LearningModuleHub? _hub;
     private CodePatternData _data = new();
     private bool _loaded;
 
-    public CodePatternLearning(string filePath)
+    public CodePatternLearning(string filePath, LearningModuleHub? hub = null)
     {
         _filePath = filePath;
+        _hub = hub;
     }
 
     public async Task LoadAsync(CancellationToken ct = default)
@@ -109,6 +113,15 @@ public class CodePatternLearning
         }
         ep.LearnedFix = fix;
         ep.FixConfirmed = true;
+
+        _hub?.Publish(new LearningEvent("PatternLearning",
+            LearningEventTypes.CodeGenSuccess,
+            new CodeGenEventData
+            {
+                Query = $"[fix_learned] {errorPattern}",
+                Code = fix,
+                Description = $"Learned fix for pattern: {errorPattern}"
+            }));
     }
 
     /// <summary>
@@ -175,6 +188,16 @@ public class CodePatternLearning
         lines.Add($"  Success rate: {Math.Round(successRate, 1)}% ({_data.TotalSuccesses}/{_data.TotalSuccesses + _data.TotalFailures})");
 
         return string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// Get confirmed error→fix pairs for programmatic use (e.g., CodeAutoFixer integration).
+    /// </summary>
+    public Dictionary<string, string> GetConfirmedFixes()
+    {
+        return _data.ErrorPatterns.Values
+            .Where(ep => ep.FixConfirmed && !string.IsNullOrEmpty(ep.LearnedFix))
+            .ToDictionary(ep => ep.Pattern, ep => ep.LearnedFix!);
     }
 
     /// <summary>

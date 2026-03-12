@@ -10,8 +10,8 @@ namespace RevitChatBot.MEP.Skills.Modify;
     "The override is view-specific and non-destructive; use clear_overrides to reset. " +
     "Colors: red, green, blue, yellow, orange, purple, cyan, magenta, or custom RGB.")]
 [SkillParameter("element_ids", "string",
-    "Comma-separated element IDs to colorize (e.g., '123456,789012')",
-    isRequired: true)]
+    "Comma-separated element IDs to colorize. Not required when source='selected'.",
+    isRequired: false)]
 [SkillParameter("color", "string",
     "Color name (red, green, blue, yellow, orange, purple, cyan, magenta) or RGB hex (#FF0000)",
     isRequired: true)]
@@ -21,6 +21,9 @@ namespace RevitChatBot.MEP.Skills.Modify;
 [SkillParameter("transparency", "integer",
     "Transparency 0-100 (0 = opaque). Default: 0.",
     isRequired: false)]
+[SkillParameter("source", "string",
+    "'element_ids' (default) to use element_ids parameter, 'selected' to colorize currently selected elements in Revit.",
+    isRequired: false, allowedValues: new[] { "element_ids", "selected" })]
 public class OverrideColorSkill : ISkill
 {
     private static readonly Dictionary<string, (byte R, byte G, byte B)> NamedColors = new(StringComparer.OrdinalIgnoreCase)
@@ -45,9 +48,20 @@ public class OverrideColorSkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
+        var source = parameters.GetValueOrDefault("source")?.ToString() ?? "element_ids";
         var idsStr = parameters.GetValueOrDefault("element_ids")?.ToString();
-        if (string.IsNullOrWhiteSpace(idsStr))
-            return SkillResult.Fail("Parameter 'element_ids' is required.");
+
+        if (source == "selected")
+        {
+            var selIds = context.GetCurrentSelectionIds();
+            if (selIds is null || selIds.Count == 0)
+                return SkillResult.Fail("No elements currently selected in Revit.");
+            idsStr = string.Join(",", selIds);
+        }
+        else if (string.IsNullOrWhiteSpace(idsStr))
+        {
+            return SkillResult.Fail("Parameter 'element_ids' is required when source is 'element_ids'.");
+        }
 
         var colorStr = parameters.GetValueOrDefault("color")?.ToString();
         if (string.IsNullOrWhiteSpace(colorStr))

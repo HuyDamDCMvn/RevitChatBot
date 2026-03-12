@@ -6,6 +6,7 @@ using RevitChatBot.Core.Memory;
 using RevitChatBot.Core.Models;
 using RevitChatBot.Core.Skills;
 
+
 namespace RevitChatBot.Core.Agent;
 
 /// <summary>
@@ -72,7 +73,8 @@ public class ChatSessionV2
         DynamicCodeExamplesLibrary? dynamicExamplesLibrary = null,
         CodeGenKnowledgeEnricher? codeGenKnowledgeEnricher = null,
         SkillKnowledgeRecipeStore? recipeStore = null,
-        ContextUsageTracker? contextUsageTracker = null)
+        ContextUsageTracker? contextUsageTracker = null,
+        LearningModuleHub? hub = null)
     {
         _ollama = ollama;
         _contextManager = contextManager;
@@ -93,7 +95,7 @@ public class ChatSessionV2
             learningCortex, failureRecovery,
             codeTemplateStore, skillKnowledgeIndex, dynamicExamplesLibrary,
             codeGenKnowledgeEnricher, recipeStore,
-            contextUsageTracker);
+            contextUsageTracker, hub);
         _agent.OnStepExecuted += step => OnAgentStep?.Invoke(step);
         _agent.OnThinking += thought => OnThinking?.Invoke(thought);
     }

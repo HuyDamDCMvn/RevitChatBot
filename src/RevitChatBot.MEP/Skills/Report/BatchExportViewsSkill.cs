@@ -8,9 +8,9 @@ namespace RevitChatBot.MEP.Skills.Report;
     "Supports filtering by name pattern, view type, and discipline. " +
     "Inspired by DiRoots ProSheets. Files are saved to a ChatBot_Exports subfolder.")]
 [SkillParameter("format", "string",
-    "Export format: 'pdf', 'dwg', 'dwf', 'image'.",
+    "Export format: 'pdf', 'dwg', 'dwf', 'image', 'ifc', 'nwc'.",
     isRequired: true,
-    allowedValues: new[] { "pdf", "dwg", "dwf", "image" })]
+    allowedValues: new[] { "pdf", "dwg", "dwf", "image", "ifc", "nwc" })]
 [SkillParameter("target", "string",
     "What to export: 'sheets', 'views', 'both'. Default 'sheets'.",
     isRequired: false,
@@ -25,6 +25,14 @@ namespace RevitChatBot.MEP.Skills.Report;
     "For image export: 'low' (72dpi), 'medium' (150dpi), 'high' (300dpi). Default 'medium'.",
     isRequired: false,
     allowedValues: new[] { "low", "medium", "high" })]
+[SkillParameter("naming_pattern", "string",
+    "Custom file naming pattern. Placeholders: {SheetNumber}, {SheetName}, {ViewName}, {Date}. " +
+    "Example: '{SheetNumber}-{SheetName}'. Default uses sheet number + name.",
+    isRequired: false)]
+[SkillParameter("ifc_version", "string",
+    "IFC version for IFC export. Default 'IFC4'.",
+    isRequired: false,
+    allowedValues: new[] { "IFC2x3", "IFC4" })]
 public class BatchExportViewsSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -40,6 +48,8 @@ public class BatchExportViewsSkill : ISkill
         var nameFilter = parameters.GetValueOrDefault("name_filter")?.ToString();
         var sheetNumFilter = parameters.GetValueOrDefault("sheet_number_filter")?.ToString();
         var imageRes = parameters.GetValueOrDefault("image_resolution")?.ToString() ?? "medium";
+        var namingPattern = parameters.GetValueOrDefault("naming_pattern")?.ToString();
+        var ifcVersion = parameters.GetValueOrDefault("ifc_version")?.ToString() ?? "IFC4";
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -64,9 +74,7 @@ public class BatchExportViewsSkill : ISkill
             {
                 try
                 {
-                    var fileName = SanitizeFileName(view is ViewSheet sheet
-                        ? $"{sheet.SheetNumber}_{sheet.Name}"
-                        : view.Name);
+                    var fileName = SanitizeFileName(BuildFileName(view, namingPattern));
 
                     var success = format switch
                     {
@@ -74,6 +82,8 @@ public class BatchExportViewsSkill : ISkill
                         "dwg" => ExportDwg(document, view, exportDir, fileName),
                         "dwf" => ExportDwf(document, view, exportDir, fileName),
                         "image" => ExportImage(document, view, exportDir, fileName, imageRes),
+                        "ifc" => ExportIfc(document, exportDir, fileName, ifcVersion),
+                        "nwc" => ExportNwc(document, view, exportDir, fileName),
                         _ => false
                     };
 
@@ -211,6 +221,64 @@ public class BatchExportViewsSkill : ISkill
         options.SetViewsAndSheets(new List<ElementId> { view.Id });
         doc.ExportImage(options);
         return true;
+    }
+
+    private static string BuildFileName(View view, string? pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+        {
+            return view is ViewSheet sheet
+                ? $"{sheet.SheetNumber}_{sheet.Name}"
+                : view.Name;
+        }
+
+        var result = pattern;
+        if (view is ViewSheet vs)
+        {
+            result = result.Replace("{SheetNumber}", vs.SheetNumber)
+                           .Replace("{SheetName}", vs.Name);
+        }
+        result = result.Replace("{ViewName}", view.Name)
+                       .Replace("{Date}", DateTime.Now.ToString("yyyyMMdd"));
+        return result;
+    }
+
+    private static bool ExportIfc(Document doc, string dir, string fileName, string version)
+    {
+        try
+        {
+            var options = new IFCExportOptions
+            {
+                FileVersion = version == "IFC2x3" ? IFCVersion.IFC2x3 : IFCVersion.IFC4,
+                ExportBaseQuantities = true,
+                SpaceBoundaryLevel = 1,
+            };
+
+            using var tx = new Transaction(doc, "IFC Export");
+            tx.Start();
+            doc.Export(dir, fileName + ".ifc", options);
+            tx.Commit();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static bool ExportNwc(Document doc, View view, string dir, string fileName)
+    {
+        try
+        {
+            var options = new NavisworksExportOptions
+            {
+                ExportScope = NavisworksExportScope.View,
+                ViewId = view.Id,
+                ExportUrls = false,
+                Coordinates = NavisworksCoordinates.Shared,
+            };
+
+            doc.Export(dir, fileName + ".nwc", options);
+            return true;
+        }
+        catch { return false; }
     }
 
     private static string SanitizeFileName(string name)

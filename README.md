@@ -21,7 +21,7 @@ An AI-powered chatbot embedded in **Autodesk Revit 2025** for MEP (Mechanical, E
 
 ### Download and Install
 
-1. Download `RevitChatBot-v1.0.0.zip` from [Releases](https://github.com/HuyDamDCMvn/RevitChatBot/releases/latest)
+1. Download `RevitChatBot-v1.1.0.zip` from [Releases](https://github.com/HuyDamDCMvn/RevitChatBot/releases/latest)
 2. Extract the zip file
 3. Run the install script in PowerShell:
    ```powershell

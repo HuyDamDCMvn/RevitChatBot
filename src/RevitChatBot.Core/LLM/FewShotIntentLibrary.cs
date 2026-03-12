@@ -22,7 +22,8 @@ public static class FewShotIntentLibrary
         new("kiểm tra bảo ôn", "check", null, "check_insulation", ""),
         new("kiểm tra bảo ôn ống lạnh", "check", "pipe", "check_insulation", "system_filter=\"ChilledWater\""),
         new("ống nào chưa kết nối", "check", null, "check_disconnected_mep", ""),
-        new("kiểm tra vận tốc gió", "check", "duct", "check_duct_velocity", "max_velocity_ms=8"),
+        new("kiểm tra vận tốc gió", "check", "duct", "check_mep_velocity", "category=\"duct\", maxVelocity=8"),
+        new("kiểm tra vận tốc pipe cấp lạnh", "check", "pipe", "check_mep_velocity", "category=\"pipe\", system_name=\"Chilled Water\""),
         new("kiểm tra độ dốc ống thoát nước", "check", "pipe", "check_pipe_slope", "min_slope_pct=1"),
         new("kiểm tra van chống cháy", "check", null, "check_fire_dampers", ""),
         new("kiểm tra va chạm ống gió và ống nước", "check", null, "clash_detection", "category_a=\"duct\", category_b=\"pipe\""),
@@ -51,7 +52,14 @@ public static class FewShotIntentLibrary
         new("trace CHW system from element 12345", "query", "pipe", "traverse_mep_system", "element_id=12345, domain_filter=\"piping\""),
 
         // === English - Check ===
-        new("check duct velocity violations", "check", "duct", "check_duct_velocity", ""),
+        new("check duct velocity violations", "check", "duct", "check_mep_velocity", "category=\"duct\""),
+        new("check pipe velocity", "check", "pipe", "check_mep_velocity", "category=\"pipe\""),
+        new("copy fittings from Level 1 to Level 2", "modify", null, "copy_elements_to_level", "source_level=\"Level 1\", target_level=\"Level 2\", category=\"fittings\""),
+        new("export duct schedule to csv", "export", "duct", "export_schedule_data", "schedule_name=\"Duct Schedule\", format=\"csv\""),
+        new("report fitting count per level", "report", null, "aggregate_report", "category=\"fittings\", group_by=\"Level\", aggregate=\"count\""),
+        new("thống kê tổng chiều dài pipe theo system", "report", "pipe", "aggregate_report", "category=\"pipes\", group_by=\"System Name\", aggregate=\"sum\", value_parameter=\"Length\""),
+        new("check headroom from ceiling to duct", "check", "duct", "check_clearance", "reference=\"ceiling\", minHeight=0.3"),
+        new("check clash duct vs beam", "check", null, "clash_detection", "category_a=\"duct\", category_b=\"beam\""),
         new("find disconnected elements", "check", null, "check_disconnected_mep", ""),
         new("check insulation on chilled water pipes", "check", "pipe", "check_insulation", "system_filter=\"ChilledWater\""),
         new("check clashes between ducts and pipes", "check", null, "clash_detection", "category_a=\"duct\", category_b=\"pipe\""),
@@ -65,6 +73,96 @@ public static class FewShotIntentLibrary
 
         // === English - Calculate ===
         new("calculate duct size for 1000 CFM", "calculate", "duct", "execute_revit_code", "description=\"Duct sizing for 1000 CFM\""),
+
+        // === Vietnamese - Selection-aware ===
+        new("gán Mark cho các duct đã chọn", "modify", "duct", "batch_modify", "source=\"selected\", parameterName=\"Mark\", value=\"...\""),
+        new("kiểm tra thông tin các đối tượng đang chọn", "query", null, "inspect_element", "source=\"selected\""),
+        new("export dữ liệu các đối tượng đang chọn ra CSV", "modify", null, "export_to_csv", "source=\"selected\""),
+        new("tô màu đỏ các đối tượng đã chọn", "modify", null, "override_element_color", "source=\"selected\", color=\"red\""),
+        new("lưu selection hiện tại với tên 'ống tầng 1'", "modify", null, "selection_set", "action=\"save\", name=\"ống tầng 1\""),
+        new("map source param vào target param cho các đối tượng đang chọn", "modify", null, "map_parameters", "source=\"selected\", source_parameter=\"...\", target_parameter=\"...\""),
+        new("highlight các đối tượng đang chọn", "modify", null, "highlight_elements", "source=\"selected\", severity=\"info\""),
+
+        // === English - Selection-aware ===
+        new("set Mark on selected elements", "modify", null, "batch_modify", "source=\"selected\", parameterName=\"Mark\", value=\"...\""),
+        new("inspect the currently selected elements", "query", null, "inspect_element", "source=\"selected\""),
+        new("export selected elements to CSV", "modify", null, "export_to_csv", "source=\"selected\""),
+        new("color selected elements red", "modify", null, "override_element_color", "source=\"selected\", color=\"red\""),
+        new("save current selection as 'my set'", "modify", null, "selection_set", "action=\"save\", name=\"my set\""),
+
+        // === Vietnamese - Data table mapping ===
+        new("map bảng dữ liệu này vào duct theo Size", "modify", "duct", "map_data_table",
+            "data_source=\"inline\", match_rules=[{table_column:\"Size\",element_parameter:\"Size\",operator:\"equals\"}], mappings=[...]"),
+        new("import dữ liệu từ CSV vào pipe, match theo Mark", "modify", "pipe", "batch_update_from_csv",
+            "match_column=\"Mark\", match_parameter=\"Mark\", category=\"pipes\""),
+        new("gán giá trị từ bảng schedule vào elements", "modify", null, "map_data_table",
+            "data_source=\"schedule:Equipment Schedule\", match_rules=[...], mappings=[...]"),
+
+        // === English - Data table mapping ===
+        new("map this table to ducts on Level 1 matching by Size", "modify", "duct", "map_data_table",
+            "data_source=\"inline\", category=\"ducts\", level_filter=\"Level 1\", match_rules=[{table_column:\"Size\",element_parameter:\"Size\"}]"),
+        new("update pipes from CSV matching by Mark instead of ElementId", "modify", "pipe", "batch_update_from_csv",
+            "match_column=\"Mark\", match_parameter=\"Mark\", category=\"pipes\""),
+        new("import schedule data into MEP elements", "modify", null, "map_data_table",
+            "data_source=\"schedule:...\", match_rules=[...], mappings=[...]"),
+
+        // === Load / Mirror / Rotate ===
+        new("load family FCU-600 vào project", "create", null, "load_family", "family_name=\"FCU-600\""),
+        new("load family from path", "create", null, "load_family", "family_name=\"...\", family_path=\"C:\\...\\family.rfa\""),
+        new("mirror AHU qua trục A", "modify", null, "mirror_elements", "element_ids=\"...\", axis=\"A\", copy=\"true\""),
+        new("mirror elements across grid", "modify", null, "mirror_elements", "element_ids=\"...\", axis=\"grid_name\""),
+        new("xoay quạt 90 độ", "modify", null, "rotate_elements", "element_ids=\"...\", angle_degrees=90"),
+        new("rotate equipment 45 degrees", "modify", null, "rotate_elements", "element_ids=\"...\", angle_degrees=45"),
+
+        // === Model Health / Coordination ===
+        new("model health check", "check", null, "model_health_check", ""),
+        new("file size model bao nhiêu", "query", null, "model_health_check", ""),
+        new("bao nhiêu warning trong model", "check", null, "model_health_check", "include_details=\"true\""),
+        new("coordination report cho meeting", "analyze", null, "coordination_report", ""),
+        new("tổng hợp clash theo tầng", "analyze", null, "coordination_report", ""),
+        new("clash summary for coordination meeting", "analyze", null, "coordination_report", "scope=\"entire_model\""),
+
+        // === Progress / Templates / Shared Params ===
+        new("tiến độ model bao nhiêu phần trăm", "query", null, "model_progress", "discipline=\"all\""),
+        new("mechanical modeling xong chưa", "query", null, "model_progress", "discipline=\"mechanical\""),
+        new("model progress for Level 2", "query", null, "model_progress", "level=\"Level 2\""),
+        new("kiểm tra view template", "check", null, "view_template_audit", "action=\"full\""),
+        new("view nào chưa có template", "check", null, "view_template_audit", "action=\"orphan\""),
+        new("audit view templates", "check", null, "view_template_audit", "action=\"full\""),
+        new("kiểm tra shared parameter", "check", null, "check_shared_parameters", "action=\"audit\""),
+        new("shared parameter setup đúng chưa", "check", null, "check_shared_parameters", "action=\"audit\""),
+        new("validate shared parameters against BEP", "check", null, "check_shared_parameters",
+            "action=\"validate\", expected_parameters=\"COBie.Type.Name,Status\""),
+
+        // === Workset / Pin ===
+        new("chuyển duct tầng 3 sang workset HVAC", "modify", "duct", "workset_reassign",
+            "target_workset=\"HVAC\", category=\"ducts\", level=\"Level 3\""),
+        new("move pipes to Plumbing workset", "modify", "pipe", "workset_reassign",
+            "target_workset=\"Plumbing\", category=\"pipes\""),
+        new("pin hết linked model", "modify", null, "pin_unpin_elements", "action=\"pin\", category=\"links\""),
+        new("unpin AHU để dời", "modify", null, "pin_unpin_elements", "action=\"unpin\", element_ids=\"...\""),
+        new("tạo workset mới tên Plumbing", "create", null, "create_workset",
+            "action=\"create\", workset_name=\"Plumbing\""),
+        new("liệt kê tất cả workset", "query", null, "create_workset", "action=\"list\""),
+
+        // === Phase ===
+        new("tìm pipe giai đoạn existing", "query", "pipe", "advanced_filter",
+            "category=\"pipes\", phase=\"Existing\""),
+        new("đếm duct phase New Construction", "query", "duct", "advanced_filter",
+            "category=\"ducts\", phase=\"New Construction\""),
+
+        // === Callout / Dependent / Text / Cloud / Scope Box ===
+        new("tạo callout quanh phòng máy", "create", null, "create_callout_view",
+            "mode=\"callout\", around_element_id=\"...\""),
+        new("tạo dependent view cho plan tầng 3", "create", null, "create_callout_view",
+            "mode=\"dependent\""),
+        new("ghi text note cảnh báo clash", "create", null, "create_text_note",
+            "text=\"CHÚ Ý: clash area\", near_element_id=\"...\""),
+        new("ghi revision cloud quanh khu vực sửa", "create", null, "create_revision_cloud",
+            "around_element_ids=\"...\", comments=\"Changed routing\""),
+        new("gán scope box Zone A cho view plan tầng 2", "modify", null, "manage_scope_box",
+            "action=\"assign\", scope_box_name=\"Zone A\", view_name_pattern=\"Level 2\""),
+        new("liệt kê scope box", "query", null, "manage_scope_box", "action=\"list\""),
     ];
 
     /// <summary>

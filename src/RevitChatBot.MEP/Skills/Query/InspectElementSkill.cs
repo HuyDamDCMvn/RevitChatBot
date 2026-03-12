@@ -6,17 +6,21 @@ using RevitChatBot.Core.Skills;
 namespace RevitChatBot.MEP.Skills.Query;
 
 [Skill("inspect_element",
-    "Deep inspect any Revit element: shows all properties, parameter values, types, connectors, and relationships. " +
-    "Useful for debugging, understanding unknown elements, or gathering detailed data before code generation.")]
+    "Deep inspect Revit element(s): shows all properties, parameter values, types, connectors, and relationships. " +
+    "Useful for debugging, understanding unknown elements, or gathering detailed data before code generation. " +
+    "Supports inspecting the currently selected elements via source='selected'.")]
 [SkillParameter("element_id", "integer",
-    "The element ID to inspect",
-    isRequired: true)]
+    "The element ID to inspect. Not required when source='selected'.",
+    isRequired: false)]
 [SkillParameter("include_methods", "boolean",
     "Include parameterless method return values (slower, more data). Default false.",
     isRequired: false)]
 [SkillParameter("include_parameters", "boolean",
     "Include all Revit parameters with values. Default true.",
     isRequired: false)]
+[SkillParameter("source", "string",
+    "'element_id' (default) to inspect a single element by ID, 'selected' to inspect currently selected elements in Revit (max 5).",
+    isRequired: false, allowedValues: new[] { "element_id", "selected" })]
 public class InspectElementSkill : ISkill
 {
     public async Task<SkillResult> ExecuteAsync(
@@ -27,11 +31,27 @@ public class InspectElementSkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
-        if (!parameters.TryGetValue("element_id", out var idObj) || idObj is null)
-            return SkillResult.Fail("element_id is required.");
+        var source = parameters.GetValueOrDefault("source")?.ToString() ?? "element_id";
 
-        if (!long.TryParse(idObj.ToString(), out var elementIdValue))
-            return SkillResult.Fail($"Invalid element_id: {idObj}");
+        var elementIdsToInspect = new List<long>();
+
+        if (source == "selected")
+        {
+            var selIds = context.GetCurrentSelectionIds();
+            if (selIds is null || selIds.Count == 0)
+                return SkillResult.Fail("No elements currently selected in Revit.");
+            elementIdsToInspect.AddRange(selIds.Take(5));
+        }
+        else
+        {
+            if (!parameters.TryGetValue("element_id", out var idObj) || idObj is null)
+                return SkillResult.Fail("element_id is required when source is 'element_id'.");
+            if (!long.TryParse(idObj.ToString(), out var singleId))
+                return SkillResult.Fail($"Invalid element_id: {idObj}");
+            elementIdsToInspect.Add(singleId);
+        }
+
+        var elementIdValue = elementIdsToInspect[0];
 
         var includeMethods = false;
         if (parameters.TryGetValue("include_methods", out var im) && im is not null)
@@ -41,36 +61,45 @@ public class InspectElementSkill : ISkill
         if (parameters.TryGetValue("include_parameters", out var ip) && ip is not null)
             bool.TryParse(ip.ToString(), out includeParams);
 
+        var capturedIds = elementIdsToInspect;
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
-            var elem = document.GetElement(new ElementId(elementIdValue));
-            if (elem == null)
-                return $"Element {elementIdValue} not found in document.";
-
             var sb = new StringBuilder();
-            var elemType = elem.GetType();
 
-            sb.AppendLine($"=== Element Deep Inspection: ID {elementIdValue} ===");
-            sb.AppendLine();
+            foreach (var eid in capturedIds)
+            {
+                var elem = document.GetElement(new ElementId(eid));
+                if (elem == null)
+                {
+                    sb.AppendLine($"Element {eid} not found in document.");
+                    sb.AppendLine();
+                    continue;
+                }
 
-            AppendBasicInfo(sb, document, elem, elemType);
-            AppendProperties(sb, elem, elemType);
+                var elemType = elem.GetType();
 
-            if (includeMethods)
-                AppendMethods(sb, elem, elemType);
+                sb.AppendLine($"=== Element Deep Inspection: ID {eid} ===");
+                sb.AppendLine();
 
-            if (includeParams)
-                AppendRevitParameters(sb, elem);
+                AppendBasicInfo(sb, document, elem, elemType);
+                AppendProperties(sb, elem, elemType);
 
-            AppendConnectors(sb, elem);
-            AppendRelationships(sb, document, elem);
+                if (includeMethods)
+                    AppendMethods(sb, elem, elemType);
+
+                if (includeParams)
+                    AppendRevitParameters(sb, elem);
+
+                AppendConnectors(sb, elem);
+                AppendRelationships(sb, document, elem);
+            }
 
             return sb.ToString();
         });
 
         var text = result?.ToString() ?? "No result.";
-        if (text.StartsWith("Element ") && text.Contains("not found"))
+        if (capturedIds.Count == 1 && text.StartsWith("Element ") && text.Contains("not found"))
             return SkillResult.Fail(text);
 
         return SkillResult.Ok(text, text);

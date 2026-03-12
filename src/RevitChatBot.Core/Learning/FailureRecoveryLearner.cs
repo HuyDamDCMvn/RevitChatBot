@@ -27,11 +27,13 @@ namespace RevitChatBot.Core.Learning;
 public class FailureRecoveryLearner
 {
     private readonly string _filePath;
+    private readonly LearningModuleHub? _hub;
     private FailureKnowledgeBase _kb = new();
 
-    public FailureRecoveryLearner(string dataDir)
+    public FailureRecoveryLearner(string dataDir, LearningModuleHub? hub = null)
     {
         _filePath = Path.Combine(dataDir, "failure_recovery.json");
+        _hub = hub;
     }
 
     /// <summary>
@@ -92,6 +94,18 @@ public class FailureRecoveryLearner
 
         path.TotalAttempts++;
         if (recoverySucceeded) path.SuccessCount++;
+
+        if (recoverySucceeded && path.TotalAttempts >= 3 && path.SuccessRate >= 0.6)
+        {
+            _hub?.Publish(new LearningEvent("FailureRecovery",
+                LearningEventTypes.SkillRecovery,
+                new SkillRecoveryData
+                {
+                    FailedSkill = failedSkill,
+                    RecoverySkill = recoverySkill,
+                    FailureError = failureError
+                }));
+        }
     }
 
     /// <summary>

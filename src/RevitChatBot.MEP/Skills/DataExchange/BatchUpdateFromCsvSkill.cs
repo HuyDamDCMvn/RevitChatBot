@@ -1,13 +1,16 @@
 using System.IO;
 using System.Text.RegularExpressions;
 using Autodesk.Revit.DB;
+using Nice3point.Revit.Extensions;
 using RevitChatBot.Core.Skills;
 
 namespace RevitChatBot.MEP.Skills.DataExchange;
 
 [Skill("batch_update_from_csv",
     "Import parameter values from a CSV file and batch-update Revit elements. " +
-    "The CSV must have an 'ElementId' column and columns named after the parameters to update. " +
+    "By default matches rows via an 'ElementId' column. " +
+    "Can also match by any parameter value using match_column/match_parameter " +
+    "(e.g., match by Mark, Type Name, or Size). " +
     "Inspired by DiRoots SheetLink's import-from-Excel workflow.")]
 [SkillParameter("file_path", "string",
     "Full path to the CSV file. If not provided, looks for the most recent file in ChatBot_Exports.",
@@ -19,11 +22,40 @@ namespace RevitChatBot.MEP.Skills.DataExchange;
 [SkillParameter("parameters", "string",
     "Comma-separated list of parameter columns to import. If empty, all non-read-only columns are updated.",
     isRequired: false)]
+[SkillParameter("match_column", "string",
+    "CSV column name used to identify elements. Default: 'ElementId'. " +
+    "Can be any column (e.g. 'Mark', 'Type') when used with match_parameter.",
+    isRequired: false)]
+[SkillParameter("match_parameter", "string",
+    "Revit parameter name to match against match_column values. Default: 'ElementId'. " +
+    "Example: if match_column='Mark' and match_parameter='Mark', rows are matched by Mark value.",
+    isRequired: false)]
+[SkillParameter("category", "string",
+    "Element category to scope search. Required when match_parameter is not 'ElementId'. " +
+    "Values: 'ducts', 'pipes', 'equipment', 'fittings', 'electrical', 'plumbing', 'all_mep'.",
+    isRequired: false,
+    allowedValues: new[] { "ducts", "pipes", "equipment", "fittings", "electrical", "plumbing", "all_mep" })]
 public class BatchUpdateFromCsvSkill : ISkill
 {
-    private static readonly HashSet<string> SkipColumns = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> DefaultSkipColumns = new(StringComparer.OrdinalIgnoreCase)
     {
         "ElementId", "Name", "Category", "Type", "Level"
+    };
+
+    private static readonly Dictionary<string, BuiltInCategory[]> CategoryMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ducts"] = [BuiltInCategory.OST_DuctCurves, BuiltInCategory.OST_FlexDuctCurves],
+        ["pipes"] = [BuiltInCategory.OST_PipeCurves, BuiltInCategory.OST_FlexPipeCurves],
+        ["equipment"] = [BuiltInCategory.OST_MechanicalEquipment],
+        ["fittings"] = [BuiltInCategory.OST_DuctFitting, BuiltInCategory.OST_PipeFitting],
+        ["electrical"] = [BuiltInCategory.OST_ElectricalEquipment, BuiltInCategory.OST_ElectricalFixtures],
+        ["plumbing"] = [BuiltInCategory.OST_PlumbingFixtures],
+        ["all_mep"] = [
+            BuiltInCategory.OST_DuctCurves, BuiltInCategory.OST_PipeCurves,
+            BuiltInCategory.OST_MechanicalEquipment, BuiltInCategory.OST_DuctFitting,
+            BuiltInCategory.OST_PipeFitting, BuiltInCategory.OST_ElectricalEquipment,
+            BuiltInCategory.OST_PlumbingFixtures
+        ],
     };
 
     public async Task<SkillResult> ExecuteAsync(
@@ -37,11 +69,31 @@ public class BatchUpdateFromCsvSkill : ISkill
         var filePath = parameters.GetValueOrDefault("file_path")?.ToString();
         var action = parameters.GetValueOrDefault("action")?.ToString() ?? "preview";
         var paramFilter = parameters.GetValueOrDefault("parameters")?.ToString();
+        var matchColumn = parameters.GetValueOrDefault("match_column")?.ToString() ?? "ElementId";
+        var matchParameter = parameters.GetValueOrDefault("match_parameter")?.ToString() ?? "ElementId";
+        var categoryStr = parameters.GetValueOrDefault("category")?.ToString();
+
+        var useParameterMatching = !matchColumn.Equals("ElementId", StringComparison.OrdinalIgnoreCase)
+                                || !matchParameter.Equals("ElementId", StringComparison.OrdinalIgnoreCase);
+
+        if (useParameterMatching && string.IsNullOrWhiteSpace(categoryStr))
+            return SkillResult.Fail("category is required when using parameter-based matching (match_column/match_parameter).");
+
+        BuiltInCategory[]? bics = null;
+        if (!string.IsNullOrWhiteSpace(categoryStr))
+        {
+            if (!CategoryMap.TryGetValue(categoryStr, out bics))
+                return SkillResult.Fail($"Unknown category '{categoryStr}'.");
+        }
 
         var allowedParams = string.IsNullOrWhiteSpace(paramFilter)
             ? null
             : paramFilter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var skipColumns = new HashSet<string>(DefaultSkipColumns, StringComparer.OrdinalIgnoreCase);
+        if (useParameterMatching)
+            skipColumns.Add(matchColumn);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -52,14 +104,19 @@ public class BatchUpdateFromCsvSkill : ISkill
                 return new UpdateResult { Success = false, Message = $"CSV file not found: {filePath}" };
 
             var (headers, rows) = ParseCsv(resolvedPath);
-            var idColIdx = headers.IndexOf("ElementId");
-            if (idColIdx < 0)
-                return new UpdateResult { Success = false, Message = "CSV must have an 'ElementId' column." };
+
+            var matchColIdx = headers.FindIndex(h => h.Equals(matchColumn, StringComparison.OrdinalIgnoreCase));
+            if (matchColIdx < 0)
+                return new UpdateResult
+                {
+                    Success = false,
+                    Message = $"CSV must have a '{matchColumn}' column. Available: {string.Join(", ", headers)}"
+                };
 
             var paramColumns = new List<(int Index, string Name)>();
             for (var i = 0; i < headers.Count; i++)
             {
-                if (SkipColumns.Contains(headers[i])) continue;
+                if (skipColumns.Contains(headers[i])) continue;
                 if (allowedParams is not null && !allowedParams.Contains(headers[i])) continue;
                 paramColumns.Add((i, headers[i]));
             }
@@ -67,37 +124,74 @@ public class BatchUpdateFromCsvSkill : ISkill
             if (paramColumns.Count == 0)
                 return new UpdateResult { Success = false, Message = "No updateable parameter columns found in CSV." };
 
+            Dictionary<string, List<Element>>? paramIndex = null;
+            if (useParameterMatching && bics is not null)
+            {
+                var allElements = new List<Element>();
+                foreach (var bic in bics)
+                    allElements.AddRange(document.GetInstances(bic));
+
+                paramIndex = new Dictionary<string, List<Element>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var elem in allElements)
+                {
+                    var val = GetParameterValue(elem, matchParameter, document);
+                    if (string.IsNullOrEmpty(val)) continue;
+                    if (!paramIndex.TryGetValue(val, out var list))
+                    {
+                        list = [];
+                        paramIndex[val] = list;
+                    }
+                    list.Add(elem);
+                }
+            }
+
             var changes = new List<ChangeRecord>();
             var skipped = 0;
 
             foreach (var row in rows)
             {
-                if (idColIdx >= row.Count) continue;
-                if (!long.TryParse(row[idColIdx], out var eid)) { skipped++; continue; }
+                if (matchColIdx >= row.Count) continue;
+                var matchValue = row[matchColIdx];
+                if (string.IsNullOrWhiteSpace(matchValue)) { skipped++; continue; }
 
-                var elem = document.GetElement(new ElementId(eid));
-                if (elem is null) { skipped++; continue; }
+                List<Element> matchedElements;
 
-                foreach (var (colIdx, paramName) in paramColumns)
+                if (useParameterMatching && paramIndex is not null)
                 {
-                    if (colIdx >= row.Count) continue;
-                    var newValue = row[colIdx];
-                    if (string.IsNullOrEmpty(newValue)) continue;
+                    matchedElements = paramIndex.GetValueOrDefault(matchValue) ?? [];
+                }
+                else
+                {
+                    if (!long.TryParse(matchValue, out var eid)) { skipped++; continue; }
+                    var elem = document.GetElement(new ElementId(eid));
+                    matchedElements = elem is not null ? [elem] : [];
+                }
 
-                    var param = elem.LookupParameter(paramName);
-                    if (param is null || param.IsReadOnly) continue;
+                if (matchedElements.Count == 0) { skipped++; continue; }
 
-                    var oldValue = param.AsValueString() ?? param.AsString() ?? "";
-                    if (oldValue == newValue) continue;
-
-                    changes.Add(new ChangeRecord
+                foreach (var elem in matchedElements)
+                {
+                    foreach (var (colIdx, paramName) in paramColumns)
                     {
-                        ElementId = eid,
-                        ElementName = elem.Name,
-                        ParameterName = paramName,
-                        OldValue = oldValue,
-                        NewValue = newValue
-                    });
+                        if (colIdx >= row.Count) continue;
+                        var newValue = row[colIdx];
+                        if (string.IsNullOrEmpty(newValue)) continue;
+
+                        var param = elem.LookupParameter(paramName);
+                        if (param is null || param.IsReadOnly) continue;
+
+                        var oldValue = param.AsValueString() ?? param.AsString() ?? "";
+                        if (oldValue == newValue) continue;
+
+                        changes.Add(new ChangeRecord
+                        {
+                            ElementId = elem.Id.Value,
+                            ElementName = elem.Name,
+                            ParameterName = paramName,
+                            OldValue = oldValue,
+                            NewValue = newValue
+                        });
+                    }
                 }
             }
 
@@ -126,7 +220,8 @@ public class BatchUpdateFromCsvSkill : ISkill
                 return new UpdateResult
                 {
                     Success = true,
-                    Message = $"Applied {applied} changes ({failed} failed, {skipped} rows skipped).",
+                    Message = $"Applied {applied} changes ({failed} failed, {skipped} rows skipped). " +
+                              $"Matched by: {matchColumn} → {matchParameter}.",
                     AppliedCount = applied,
                     FailedCount = failed,
                     SkippedRows = skipped,
@@ -137,7 +232,9 @@ public class BatchUpdateFromCsvSkill : ISkill
             return new UpdateResult
             {
                 Success = true,
-                Message = $"Preview: {changes.Count} parameters would change across {changes.Select(c => c.ElementId).Distinct().Count()} elements.",
+                Message = $"Preview: {changes.Count} parameters would change across " +
+                          $"{changes.Select(c => c.ElementId).Distinct().Count()} elements. " +
+                          $"Matched by: {matchColumn} → {matchParameter}.",
                 AppliedCount = 0,
                 FailedCount = 0,
                 SkippedRows = skipped,
@@ -151,6 +248,20 @@ public class BatchUpdateFromCsvSkill : ISkill
             return SkillResult.Fail(res?.Message ?? "Update failed.");
 
         return SkillResult.Ok(res.Message, result);
+    }
+
+    private static string? GetParameterValue(Element elem, string parameterName, Document document)
+    {
+        if (parameterName.Equals("Name", StringComparison.OrdinalIgnoreCase))
+            return elem.Name;
+        if (parameterName.Equals("Category", StringComparison.OrdinalIgnoreCase))
+            return elem.Category?.Name;
+        if (parameterName.Equals("Type", StringComparison.OrdinalIgnoreCase) ||
+            parameterName.Equals("Type Name", StringComparison.OrdinalIgnoreCase))
+            return document.GetElement(elem.GetTypeId())?.Name;
+
+        var param = elem.FindParameter(parameterName);
+        return param?.AsValueString() ?? param?.AsString();
     }
 
     private static string? ResolveFilePath(string? path, Document doc)

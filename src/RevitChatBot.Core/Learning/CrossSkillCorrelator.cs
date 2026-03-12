@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RevitChatBot.Core.Memory;
 
 namespace RevitChatBot.Core.Learning;
@@ -22,14 +23,68 @@ namespace RevitChatBot.Core.Learning;
 ///
 /// These correlations are richer than simple Markov chains because they capture
 /// semantic relationships, not just transition probabilities.
+/// Now persisted to disk so correlations survive across sessions.
 /// </summary>
 public class CrossSkillCorrelator
 {
-    private readonly Dictionary<string, SkillStats> _skillStats = new();
-    private readonly Dictionary<string, int> _pairCoOccurrence = new();
-    private readonly Dictionary<string, int> _orderedTransitions = new();
-    private readonly Dictionary<string, int> _failureRecoveries = new();
+    private readonly string? _filePath;
+    private Dictionary<string, SkillStats> _skillStats = new();
+    private Dictionary<string, int> _pairCoOccurrence = new();
+    private Dictionary<string, int> _orderedTransitions = new();
+    private Dictionary<string, int> _failureRecoveries = new();
     private int _totalSequences;
+
+    public CrossSkillCorrelator() { }
+
+    public CrossSkillCorrelator(string dataDir)
+    {
+        Directory.CreateDirectory(dataDir);
+        _filePath = Path.Combine(dataDir, "skill_correlations.json");
+    }
+
+    public async Task SaveAsync(CancellationToken ct = default)
+    {
+        if (_filePath == null) return;
+        try
+        {
+            var data = new CorrelatorData
+            {
+                SkillStats = _skillStats,
+                PairCoOccurrence = _pairCoOccurrence,
+                OrderedTransitions = _orderedTransitions,
+                FailureRecoveries = _failureRecoveries,
+                TotalSequences = _totalSequences
+            };
+            var json = JsonSerializer.Serialize(data, JsonOpts);
+            await File.WriteAllTextAsync(_filePath, json, ct);
+        }
+        catch { /* non-critical */ }
+    }
+
+    public async Task LoadAsync(CancellationToken ct = default)
+    {
+        if (_filePath == null || !File.Exists(_filePath)) return;
+        try
+        {
+            var json = await File.ReadAllTextAsync(_filePath, ct);
+            var data = JsonSerializer.Deserialize<CorrelatorData>(json, JsonOpts);
+            if (data != null)
+            {
+                _skillStats = data.SkillStats ?? new();
+                _pairCoOccurrence = data.PairCoOccurrence ?? new();
+                _orderedTransitions = data.OrderedTransitions ?? new();
+                _failureRecoveries = data.FailureRecoveries ?? new();
+                _totalSequences = data.TotalSequences;
+            }
+        }
+        catch { /* start fresh */ }
+    }
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     /// <summary>
     /// Record a complete skill sequence from a single plan execution.
@@ -227,4 +282,13 @@ public class SkillStats
     public int SuccessfulPlanCount { get; set; }
     public double AvgDurationMs { get; set; }
     public double SuccessRate { get; set; }
+}
+
+internal class CorrelatorData
+{
+    public Dictionary<string, SkillStats>? SkillStats { get; set; }
+    public Dictionary<string, int>? PairCoOccurrence { get; set; }
+    public Dictionary<string, int>? OrderedTransitions { get; set; }
+    public Dictionary<string, int>? FailureRecoveries { get; set; }
+    public int TotalSequences { get; set; }
 }

@@ -59,6 +59,13 @@
     <Copy SourceFiles="$(OutputPath)RevitChatBot.addin"
           DestinationFolder="$(RevitAddinsDir)"
           SkipUnchangedFiles="true" />
+    <!-- Copy RAG knowledge docs (non-PDF) for indexing at runtime -->
+    <ItemGroup>
+      <KnowledgeDocs Include="..\..\docs\knowledge\**\*.md;..\..\docs\knowledge\**\*.json;..\..\docs\knowledge\**\*.txt" />
+    </ItemGroup>
+    <Copy SourceFiles="@(KnowledgeDocs)"
+          DestinationFolder="$(RevitDeployDir)\knowledge\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
     <Message Importance="high" Text="Deployed to $(RevitDeployDir)" />
   </Target>
 

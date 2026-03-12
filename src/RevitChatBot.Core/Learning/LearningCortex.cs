@@ -43,16 +43,69 @@ public class LearningCortex
     private DateTime _lastAnalysisUtc;
     private readonly TimeSpan _analysisInterval = TimeSpan.FromMinutes(5);
 
-    public LearningCortex(string dataDir)
+    private readonly FailureRecoveryLearner? _failureRecovery;
+    private readonly LearningModuleHub? _hub;
+    private readonly List<CodeGenRecord> _codeGenHistory = [];
+
+    public LearningCortex(string dataDir, FailureRecoveryLearner? failureRecovery = null,
+        LearningModuleHub? hub = null)
     {
         _dataDir = dataDir;
+        _failureRecovery = failureRecovery;
+        _hub = hub;
         Directory.CreateDirectory(dataDir);
 
         _projectProfiler = new ProjectProfiler(dataDir);
         _userTracker = new UserBehaviorTracker(dataDir);
-        _correlator = new CrossSkillCorrelator();
+        _correlator = new CrossSkillCorrelator(dataDir);
         _suggestionEngine = new ProactiveSuggestionEngine();
         _annotationLearner = new AnnotationTemplateLearner(dataDir);
+
+        SubscribeToHub();
+    }
+
+    private void SubscribeToHub()
+    {
+        if (_hub == null) return;
+
+        _hub.Subscribe([LearningEventTypes.SkillFailure], evt =>
+        {
+            var data = evt.GetData<SkillFailureData>();
+            if (data != null)
+                _failureRecovery?.RecordFailure(data.SkillName, data.Arguments, data.Error);
+        });
+
+        _hub.Subscribe([LearningEventTypes.CodeGenSuccess, LearningEventTypes.CodeGenFailure], evt =>
+        {
+            var data = evt.GetData<CodeGenEventData>();
+            if (data != null) RecordCodeGenInternal(evt.EventType == LearningEventTypes.CodeGenSuccess, data);
+        });
+
+        _hub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+        {
+            var data = evt.GetData<PlanCompletedData>();
+            if (data is null) return;
+            try
+            {
+                _userTracker.RecordInteraction(
+                    query: data.Goal,
+                    intent: data.Intent,
+                    category: data.Category,
+                    skillsUsed: data.SkillsUsed,
+                    stepCount: data.StepCount,
+                    language: null);
+
+                _correlator.RecordSkillSequence(data.SkillsUsed, true, data.StepCount);
+            }
+            catch { /* non-critical */ }
+        });
+
+        _hub.Subscribe([LearningEventTypes.SkillRecovery], evt =>
+        {
+            var data = evt.GetData<SkillRecoveryData>();
+            if (data != null)
+                _correlator.RecordFailureRecovery(data.FailedSkill, data.RecoverySkill, recovered: true);
+        });
     }
 
     public ProjectProfiler ProjectProfiler => _projectProfiler;
@@ -112,6 +165,68 @@ public class LearningCortex
             }
         }
     }
+
+    /// <summary>
+    /// Ingest a codegen result — bidirectional bridge from CodeGen → Learning.
+    /// This allows the Cortex to learn from code generation successes and failures,
+    /// feeding insights back to CodePatternLearning, DynamicGlossary, etc.
+    /// </summary>
+    public void IngestCodeGenResult(bool success, string query, string code,
+        string? error = null, string? intent = null, string? category = null,
+        List<string>? apiPatternsUsed = null)
+    {
+        var data = new CodeGenEventData
+        {
+            Query = query,
+            Code = code,
+            Error = error,
+            Intent = intent,
+            Category = category,
+            ApiPatternsUsed = apiPatternsUsed ?? []
+        };
+
+        RecordCodeGenInternal(success, data);
+
+        var eventType = success ? LearningEventTypes.CodeGenSuccess : LearningEventTypes.CodeGenFailure;
+        _hub?.Publish(new LearningEvent("LearningCortex", eventType, data));
+    }
+
+    private void RecordCodeGenInternal(bool success, CodeGenEventData data)
+    {
+        _codeGenHistory.Add(new CodeGenRecord
+        {
+            Timestamp = DateTime.UtcNow,
+            Success = success,
+            Query = data.Query,
+            Error = data.Error,
+            ApiPatterns = data.ApiPatternsUsed
+        });
+
+        if (_codeGenHistory.Count > 200)
+            _codeGenHistory.RemoveRange(0, 50);
+    }
+
+    /// <summary>
+    /// Get codegen analytics for prompt injection.
+    /// </summary>
+    public string GetCodeGenInsights(int maxEntries = 5)
+    {
+        if (_codeGenHistory.Count == 0) return "";
+
+        var recentFails = _codeGenHistory
+            .Where(r => !r.Success && r.Error != null)
+            .TakeLast(maxEntries)
+            .Select(r => $"  • Query: \"{Truncate(r.Query, 60)}\" → Error: {Truncate(r.Error!, 80)}");
+
+        var failList = recentFails.ToList();
+        if (failList.Count == 0) return "";
+
+        return "--- CODEGEN RECENT FAILURES (avoid these patterns) ---\n" +
+               string.Join("\n", failList);
+    }
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..max] + "…";
 
     private static readonly HashSet<string> AnnotationSkillNames =
     [
@@ -240,7 +355,8 @@ public class LearningCortex
         await Task.WhenAll(
             _projectProfiler.SaveAsync(ct),
             _userTracker.SaveAsync(ct),
-            _annotationLearner.SaveAsync(ct));
+            _annotationLearner.SaveAsync(ct),
+            _correlator.SaveAsync(ct));
     }
 
     public async Task LoadAsync(CancellationToken ct = default)
@@ -248,7 +364,8 @@ public class LearningCortex
         await Task.WhenAll(
             _projectProfiler.LoadAsync(ct),
             _userTracker.LoadAsync(ct),
-            _annotationLearner.LoadAsync(ct));
+            _annotationLearner.LoadAsync(ct),
+            _correlator.LoadAsync(ct));
     }
 }
 
@@ -259,4 +376,20 @@ public class CortexSnapshot
     public UserProfile UserProfile { get; set; } = new();
     public List<SkillCorrelation> SkillCorrelations { get; set; } = [];
     public List<ProactiveSuggestion> ProactiveSuggestions { get; set; } = [];
+}
+
+internal class CodeGenRecord
+{
+    public DateTime Timestamp { get; set; }
+    public bool Success { get; set; }
+    public string Query { get; set; } = "";
+    public string? Error { get; set; }
+    public List<string> ApiPatterns { get; set; } = [];
+}
+
+public class SkillFailureData
+{
+    public string SkillName { get; set; } = "";
+    public Dictionary<string, object?> Arguments { get; set; } = new();
+    public string Error { get; set; } = "";
 }

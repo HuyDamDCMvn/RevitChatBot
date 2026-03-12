@@ -6,25 +6,45 @@ using RevitChatBot.RevitServices;
 namespace RevitChatBot.MEP.Skills.Coordination;
 
 [Skill("clash_detection",
-    "Detect geometric clashes/intersections between MEP elements in the model. " +
-    "Checks bounding box overlaps between two categories of elements.")]
+    "Detect geometric clashes/intersections between elements in the model. " +
+    "Checks bounding box overlaps between two categories. Supports MEP-to-MEP, " +
+    "MEP-to-structural (beams, columns), MEP-to-architectural (walls, floors).")]
 [SkillParameter("category_a", "string",
-    "First category: duct, pipe, equipment",
+    "First category: duct, pipe, equipment, cable_tray, conduit, fitting",
     isRequired: true,
-    allowedValues: new[] { "duct", "pipe", "equipment" })]
+    allowedValues: new[] { "duct", "pipe", "equipment", "cable_tray", "conduit", "fitting" })]
 [SkillParameter("category_b", "string",
-    "Second category: duct, pipe, equipment, structural",
+    "Second category: duct, pipe, equipment, cable_tray, conduit, fitting, " +
+    "beam, column, wall, floor",
     isRequired: true,
-    allowedValues: new[] { "duct", "pipe", "equipment", "structural" })]
+    allowedValues: new[] { "duct", "pipe", "equipment", "cable_tray", "conduit", "fitting",
+        "beam", "column", "wall", "floor" })]
 [SkillParameter("tolerance_feet", "number",
     "Clash tolerance in feet (default 0.01)",
     isRequired: false)]
+[SkillParameter("level", "string",
+    "Filter both sets by level name (optional).",
+    isRequired: false)]
 [SkillParameter("scope", "string",
-    "Scope: 'active_view' to limit to elements visible in the current view, " +
-    "'entire_model' to include all (default: entire_model)",
+    "Scope: 'active_view' or 'entire_model' (default: entire_model).",
     isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
 public class ClashDetectionSkill : ISkill
 {
+    private static readonly Dictionary<string, BuiltInCategory> CategoryMapping = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["duct"] = BuiltInCategory.OST_DuctCurves,
+        ["pipe"] = BuiltInCategory.OST_PipeCurves,
+        ["equipment"] = BuiltInCategory.OST_MechanicalEquipment,
+        ["cable_tray"] = BuiltInCategory.OST_CableTray,
+        ["conduit"] = BuiltInCategory.OST_Conduit,
+        ["fitting"] = BuiltInCategory.OST_DuctFitting,
+        ["beam"] = BuiltInCategory.OST_StructuralFraming,
+        ["column"] = BuiltInCategory.OST_StructuralColumns,
+        ["wall"] = BuiltInCategory.OST_Walls,
+        ["floor"] = BuiltInCategory.OST_Floors,
+        ["structural"] = BuiltInCategory.OST_StructuralColumns,
+    };
+
     public async Task<SkillResult> ExecuteAsync(
         SkillContext context,
         Dictionary<string, object?> parameters,
@@ -38,13 +58,19 @@ public class ClashDetectionSkill : ISkill
         var tolerance = 0.01;
         if (parameters.TryGetValue("tolerance_feet", out var tol) && tol is not null)
             double.TryParse(tol.ToString(), out tolerance);
+        var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
         var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
+
+        if (!CategoryMapping.ContainsKey(catA))
+            return SkillResult.Fail($"Unknown category_a '{catA}'. Supported: {string.Join(", ", CategoryMapping.Keys)}");
+        if (!CategoryMapping.ContainsKey(catB))
+            return SkillResult.Fail($"Unknown category_b '{catB}'. Supported: {string.Join(", ", CategoryMapping.Keys)}");
 
         var result = await context.RevitApiInvoker(doc =>
         {
             var document = (Document)doc;
-            var elementsA = GetElements(document, catA, scope);
-            var elementsB = GetElements(document, catB, scope);
+            var elementsA = GetElements(document, catA, scope, levelFilter);
+            var elementsB = GetElements(document, catB, scope, levelFilter);
 
             var clashes = new List<object>();
 
@@ -77,29 +103,44 @@ public class ClashDetectionSkill : ISkill
             {
                 categoryA = catA,
                 categoryB = catB,
+                elementsInA = elementsA.Count,
+                elementsInB = elementsB.Count,
                 totalClashes = clashes.Count,
-                clashes = clashes.Take(50).ToList()
+                clashes = clashes.Take(100).ToList()
             };
         });
 
         return SkillResult.Ok("Clash detection completed.", result);
     }
 
-    private static List<Element> GetElements(Document doc, string category, string scope)
+    private static List<Element> GetElements(Document doc, string category, string scope, string? levelFilter)
     {
-        var bic = category switch
-        {
-            "duct" => BuiltInCategory.OST_DuctCurves,
-            "pipe" => BuiltInCategory.OST_PipeCurves,
-            "equipment" => BuiltInCategory.OST_MechanicalEquipment,
-            "structural" => BuiltInCategory.OST_StructuralColumns,
-            _ => BuiltInCategory.OST_GenericModel
-        };
+        if (!CategoryMapping.TryGetValue(category, out var bic))
+            bic = BuiltInCategory.OST_GenericModel;
 
-        return ViewScopeHelper.CreateCollector(doc, scope)
+        var elements = ViewScopeHelper.CreateCollector(doc, scope)
             .OfCategory(bic)
             .WhereElementIsNotElementType()
             .ToList();
+
+        if (!string.IsNullOrWhiteSpace(levelFilter))
+        {
+            elements = elements.Where(e =>
+            {
+                var lvlName = GetLevelName(doc, e);
+                return lvlName.Contains(levelFilter, StringComparison.OrdinalIgnoreCase);
+            }).ToList();
+        }
+
+        return elements;
+    }
+
+    private static string GetLevelName(Document doc, Element elem)
+    {
+        var lvlId = elem.get_Parameter(BuiltInParameter.RBS_START_LEVEL_PARAM)?.AsElementId()
+                    ?? elem.LevelId;
+        if (lvlId is null || lvlId == ElementId.InvalidElementId) return "";
+        return doc.GetElement(lvlId)?.Name ?? "";
     }
 
     private static bool BoundingBoxesOverlap(XYZ minA, XYZ maxA, XYZ minB, XYZ maxB) =>
