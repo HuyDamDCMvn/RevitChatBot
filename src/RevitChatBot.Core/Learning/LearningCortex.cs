@@ -387,9 +387,3 @@ internal class CodeGenRecord
     public List<string> ApiPatterns { get; set; } = [];
 }
 
-public class SkillFailureData
-{
-    public string SkillName { get; set; } = "";
-    public Dictionary<string, object?> Arguments { get; set; } = new();
-    public string Error { get; set; } = "";
-}

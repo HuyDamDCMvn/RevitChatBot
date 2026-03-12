@@ -15,7 +15,8 @@ namespace RevitChatBot.MEP.Skills.Report;
     "Use for: fitting count per level, total duct length per system, " +
     "equipment count per room, etc. Returns structured table data.")]
 [SkillParameter("category", "string",
-    "Element category: 'ducts', 'pipes', 'fittings', 'pipe_fittings', 'equipment', " +
+    "Element category: 'all_mep' for cross-category summary (count per category), " +
+    "or specific: 'ducts', 'pipes', 'fittings', 'pipe_fittings', 'equipment', " +
     "'cable_trays', 'conduits', 'sprinklers', 'air_terminals', 'duct_accessories', " +
     "'pipe_accessories', 'flex_ducts', 'flex_pipes'.",
     isRequired: true)]
@@ -70,9 +71,17 @@ public class AggregateReportSkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
-        var categoryStr = parameters.GetValueOrDefault("category")?.ToString() ?? "";
-        if (!CategoryMap.TryGetValue(categoryStr.Trim(), out var bic))
-            return SkillResult.Fail($"Unknown category '{categoryStr}'. Supported: {string.Join(", ", CategoryMap.Keys)}");
+        var categoryStr = parameters.GetValueOrDefault("category")?.ToString()?.Trim() ?? "";
+        var isAllMep = categoryStr.Equals("all_mep", StringComparison.OrdinalIgnoreCase)
+                       || categoryStr.Equals("all", StringComparison.OrdinalIgnoreCase);
+
+        if (!isAllMep && !CategoryMap.ContainsKey(categoryStr))
+            return SkillResult.Fail($"Unknown category '{categoryStr}'. Supported: all_mep, {string.Join(", ", CategoryMap.Keys)}");
+
+        if (isAllMep)
+            return await ExecuteAllMepAsync(context, parameters);
+
+        var bic = CategoryMap[categoryStr];
 
         var groupBy = parameters.GetValueOrDefault("group_by")?.ToString();
         if (string.IsNullOrWhiteSpace(groupBy))
@@ -181,6 +190,60 @@ public class AggregateReportSkill : ISkill
         dynamic res = result!;
         return SkillResult.Ok(
             $"Aggregated {res.totalElements} elements into {res.groupCount} groups.",
+            result);
+    }
+
+    private async Task<SkillResult> ExecuteAllMepAsync(
+        SkillContext context,
+        Dictionary<string, object?> parameters)
+    {
+        var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
+        var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
+
+        var result = await context.RevitApiInvoker!(doc =>
+        {
+            var document = (Document)doc;
+            var rows = new List<Dictionary<string, object?>>();
+            int grandTotal = 0;
+
+            foreach (var (key, bic) in CategoryMap)
+            {
+                var collector = new FluentCollector(document)
+                    .OfCategory(bic)
+                    .WhereElementIsNotElementType();
+
+                if (!string.IsNullOrWhiteSpace(levelFilter))
+                    collector.OnLevel(levelFilter);
+
+                var count = collector.ToList().Count;
+                if (count > 0)
+                {
+                    rows.Add(new Dictionary<string, object?>
+                    {
+                        ["Category"] = key,
+                        ["count"] = count
+                    });
+                    grandTotal += count;
+                }
+            }
+
+            return new
+            {
+                category = "all_mep",
+                totalElements = grandTotal,
+                groupCount = rows.Count,
+                groupBy = "Category",
+                secondaryGroup = (string?)null,
+                aggregateMode = "count",
+                valueParameter = (string?)null,
+                groups = rows.OrderByDescending(r => (int)r["count"]!).ToList(),
+                summary = (object?)null
+            };
+        });
+
+        dynamic res = result!;
+        return SkillResult.Ok(
+            $"Cross-category summary: {res.totalElements} MEP elements across {res.groupCount} categories.",
             result);
     }
 

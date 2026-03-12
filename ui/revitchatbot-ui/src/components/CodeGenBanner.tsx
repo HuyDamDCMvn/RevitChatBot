@@ -77,11 +77,11 @@ export function CodeGenBanner({ suggest, pullProgress, isPulling, onDismiss }: P
           <span className="mt-0.5 text-base">⚡</span>
           <div>
             <p className="text-xs font-semibold text-amber-800">
-              Nâng cấp CodeGen
+              Upgrade CodeGen
             </p>
             <p className="mt-0.5 text-[11px] text-amber-700 leading-relaxed">
-              Model chuyên code sẽ giúp sinh code Revit API chính xác hơn nhiều.
-              Hoàn toàn miễn phí, chạy local.
+              A code-specialized model generates far more accurate Revit API code.
+              Completely free, runs locally.
             </p>
           </div>
         </div>

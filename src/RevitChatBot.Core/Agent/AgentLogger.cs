@@ -93,6 +93,28 @@ public class AgentLogger : IDisposable
         });
     }
 
+    public void LogBackgroundError(string operation, string error)
+    {
+        Write(new
+        {
+            type = "background_error",
+            ts = DateTime.UtcNow.ToString("o"),
+            operation,
+            error = error.Length > 500 ? error[..500] : error
+        });
+    }
+
+    public void LogSlowProvider(string providerName, double durationMs)
+    {
+        Write(new
+        {
+            type = "slow_context_provider",
+            ts = DateTime.UtcNow.ToString("o"),
+            provider = providerName,
+            duration_ms = Math.Round(durationMs, 1)
+        });
+    }
+
     private void Write(object entry)
     {
         try

@@ -247,7 +247,11 @@ public class AgentOrchestrator
                     Content = $"[Clarification needed: {clarification.Reason}] {clarification.Question}"
                 };
                 plan.Steps.Add(clarifyStep);
+                plan.FinalAnswer = clarification.Question;
                 OnStepExecuted?.Invoke(clarifyStep);
+
+                _history.Add(ChatMessage.FromUser(userMessage));
+                return plan;
             }
 
             if (analysis.IsAmbiguous)
@@ -488,7 +492,9 @@ public class AgentOrchestrator
                 OnStepExecuted?.Invoke(plan.Steps[^1]);
 
                 if (_memory != null)
-                    _ = _memory.OnAssistantResponseAsync(userMsg, response, cancellationToken);
+                    RunInBackground(
+                        () => _memory.OnAssistantResponseAsync(userMsg, response, cancellationToken),
+                        "MemoryOnResponse");
 
                 break;
             }
@@ -540,157 +546,9 @@ public class AgentOrchestrator
 
             foreach (var toolCall in response.ToolCalls)
             {
-                if (automationMode != AutomationMode.AutoExecute
-                    && DestructiveSkills.Contains(toolCall.FunctionName))
-                {
-                    var confirmed = await RequestConfirmation(toolCall, cancellationToken);
-                    if (!confirmed)
-                    {
-                        var cancelMsg = ChatMessage.FromTool(toolCall.FunctionName,
-                            "{\"success\":false,\"message\":\"User cancelled the operation.\"}");
-                        messages.Add(cancelMsg);
-                        _history.Add(cancelMsg);
-
-                        plan.Steps.Add(new AgentStep
-                        {
-                            Type = AgentStepType.Observation,
-                            Content = "User cancelled the destructive action.",
-                            SkillName = toolCall.FunctionName
-                        });
-                        continue;
-                    }
-                }
-
-                var actionStep = new AgentStep
-                {
-                    Type = AgentStepType.Action,
-                    SkillName = toolCall.FunctionName,
-                    Parameters = toolCall.Arguments,
-                    Content = $"Executing: {toolCall.FunctionName}"
-                };
-                plan.Steps.Add(actionStep);
-                OnStepExecuted?.Invoke(actionStep);
-
-                // --- Warnings Delta: capture before ---
-                WarningsDelta? warningsDelta = null;
-                if (DestructiveSkills.Contains(toolCall.FunctionName) && OnCaptureWarnings != null)
-                {
-                    try
-                    {
-                        var beforeCapture = await OnCaptureWarnings.Invoke();
-                        _warningsDeltaTracker.CaptureBeforeState(
-                            beforeCapture.WarningCount, beforeCapture.WarningDetails);
-                    }
-                    catch { }
-                }
-
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                var result = await _skillExecutor.ExecuteAsync(
-                    toolCall.FunctionName, toolCall.Arguments, cancellationToken);
-                sw.Stop();
-
-                // --- Warnings Delta: capture after ---
-                if (DestructiveSkills.Contains(toolCall.FunctionName) && OnCaptureWarnings != null)
-                {
-                    try
-                    {
-                        var afterCapture = await OnCaptureWarnings.Invoke();
-                        warningsDelta = _warningsDeltaTracker.ComputeDelta(
-                            afterCapture.WarningCount, afterCapture.WarningDetails);
-                    }
-                    catch { }
-                }
-
-                _agentLogger?.LogToolExecution(
-                    toolCall.FunctionName, toolCall.Arguments,
-                    result.Success, sw.Elapsed.TotalMilliseconds, warningsDelta);
-
-                _memory?.OnSkillExecuted(toolCall.FunctionName, result.Success, sw.Elapsed.TotalMilliseconds);
-
-                if (toolCall.FunctionName == "execute_revit_code")
-                    _memory?.OnCodeGenAttempt(result.Success, result.Success, result.Success ? null : "compile_error");
-
-                _dynamicSkillRegistry?.RecordUsage(toolCall.FunctionName);
-
-                if (result.Success)
-                {
-                    _fewShotLearning?.RecordSuccess(effectiveQuery, toolCall.FunctionName, toolCall.Arguments);
-
-                    if (_lastFailedSkillName is not null)
-                    {
-                        _failureRecovery?.RecordRecovery(
-                            _lastFailedSkillName, toolCall.FunctionName,
-                            _lastFailedSkillError ?? "", recoverySucceeded: true);
-                        _learningCortex?.SkillCorrelator.RecordFailureRecovery(
-                            _lastFailedSkillName, toolCall.FunctionName, recovered: true);
-
-                        _hub?.Publish(new LearningEvent("AgentOrchestrator",
-                            LearningEventTypes.SkillRecovery,
-                            new SkillRecoveryData
-                            {
-                                FailedSkill = _lastFailedSkillName,
-                                RecoverySkill = toolCall.FunctionName,
-                                FailureError = _lastFailedSkillError ?? ""
-                            }));
-
-                        _lastFailedSkillName = null;
-                        _lastFailedSkillError = null;
-                    }
-                }
-                else if (_failureRecovery is not null)
-                {
-                    _failureRecovery.RecordFailure(
-                        toolCall.FunctionName, toolCall.Arguments,
-                        result.Message ?? "unknown error");
-
-                    _hub?.Publish(new LearningEvent("AgentOrchestrator",
-                        LearningEventTypes.SkillFailure,
-                        new SkillFailureData
-                        {
-                            SkillName = toolCall.FunctionName,
-                            Arguments = toolCall.Arguments,
-                            Error = result.Message ?? "unknown error"
-                        }));
-
-                    _lastFailedSkillName = toolCall.FunctionName;
-                    _lastFailedSkillError = result.Message;
-
-                    var fallback = _learningCortex?.SkillCorrelator.GetBestFallback(toolCall.FunctionName);
-                    var recoveryAdvice = _failureRecovery.GetRecoveryAdvice(
-                        toolCall.FunctionName, result.Message ?? "");
-
-                    if (fallback is not null && recoveryAdvice is null)
-                        recoveryAdvice = $"Try '{fallback}' as fallback (learned from past recoveries).";
-                    else if (fallback is not null && recoveryAdvice is not null)
-                        recoveryAdvice += $" Also consider '{fallback}' as learned fallback.";
-
-                    if (recoveryAdvice is not null)
-                        result.Message += $"\n[Recovery hint: {recoveryAdvice}]";
-                }
-
-                // --- Visual Feedback Learning: track skill→visualization pairings ---
-                TrackVisualizationPairing(toolCall.FunctionName, toolCall.Arguments, result.Success);
-
-                var resultJson = result.ToJson();
-                if (warningsDelta is { Delta: not 0 })
-                    resultJson = resultJson.TrimEnd('}') + $",\"warnings_delta\":\"{warningsDelta.ToSummary()}\"}}";
-
-                var toolMessage = ChatMessage.FromTool(toolCall.FunctionName, resultJson);
-                messages.Add(toolMessage);
-                _history.Add(toolMessage);
-
-                var observationContent = result.Message;
-                if (warningsDelta is { IsRegression: true })
-                    observationContent += $"\n{warningsDelta.ToSummary()}";
-
-                var observationStep = new AgentStep
-                {
-                    Type = AgentStepType.Observation,
-                    SkillName = toolCall.FunctionName,
-                    Content = observationContent
-                };
-                plan.Steps.Add(observationStep);
-                OnStepExecuted?.Invoke(observationStep);
+                await ProcessToolCallAsync(
+                    toolCall, plan, messages, effectiveQuery,
+                    automationMode, cancellationToken);
             }
         }
 
@@ -702,177 +560,335 @@ public class AgentOrchestrator
             _history.Add(finalResponse);
 
             if (_memory != null)
-                _ = _memory.OnAssistantResponseAsync(userMsg, finalResponse, cancellationToken);
+                RunInBackground(
+                    () => _memory.OnAssistantResponseAsync(userMsg, finalResponse, cancellationToken),
+                    "MemoryOnFinalResponse");
         }
-
-        // --- Phase 5: Post-processing — Self-Learning Pipeline ---
-        if (_dynamicGlossary != null && plan.FinalAnswer != null)
-            _dynamicGlossary.LearnFromCorrection(userMessage, plan.FinalAnswer);
 
         if (plan.IsCompleted)
-        {
-            // 5a. Record interaction for knowledge synthesis & gap analysis
-            _interactionRecorder?.Record(plan, analysis);
-
-            // 5b. Record successful multi-step plan for replay
-            if (plan.Steps.Any(s => s.Type == AgentStepType.Action))
-                _ = RecordPlanAsync(plan, analysis, cancellationToken);
-
-            // 5c. Self-evaluate and record improvements (async, non-blocking)
-            var actionStepCount = plan.Steps.Count(s => s.Type == AgentStepType.Action);
-            if (_selfEvaluator != null && actionStepCount >= SelfEvalMinSteps)
-                _ = SelfEvaluateAsync(plan, analysis, cancellationToken);
-
-            // 5d. Record recipe (skill+knowledge combo) for future reuse
-            try
-            {
-                var retrievedKnowledge = _contextManager.ContextCache?.Extra
-                    ?.GetValueOrDefault("retrieved_knowledge_sources") as List<string>;
-                var codeGenCode = plan.Steps
-                    .FirstOrDefault(s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Action)
-                    ?.Content;
-                _recipeStore?.RecordFromPlan(plan, analysis, retrievedKnowledge, codeGenCode);
-            }
-            catch { /* non-critical */ }
-
-            // 5e. Record successful codegen as learned example
-            try
-            {
-                if (_dynamicExamplesLibrary != null)
-                {
-                    foreach (var step in plan.Steps.Where(
-                        s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Observation))
-                    {
-                        var actionStep = plan.Steps
-                            .LastOrDefault(s => s.SkillName == "execute_revit_code"
-                                && s.Type == AgentStepType.Action
-                                && plan.Steps.IndexOf(s) < plan.Steps.IndexOf(step));
-                        if (actionStep?.Content != null && !step.Content.Contains("FAILED"))
-                        {
-                            _dynamicExamplesLibrary.LearnFromSuccess(
-                                actionStep.Content, plan.Goal, effectiveQuery, analysis, 0);
-                        }
-                    }
-                    _ = Task.Run(() => _dynamicExamplesLibrary.SaveAsync(CancellationToken.None));
-                }
-            }
-            catch { /* non-critical */ }
-
-            // 5f. Learning Cortex — fan out to all sub-analyzers
-            try
-            {
-                _learningCortex?.Ingest(plan, analysis, _memory?.Analytics);
-            }
-            catch { /* non-critical */ }
-
-            // 5f1. Publish plan_completed for cross-module learning
-            try
-            {
-                var skillsUsed = plan.Steps
-                    .Where(s => s.Type == AgentStepType.Action && s.SkillName is not null)
-                    .Select(s => s.SkillName!)
-                    .ToList();
-
-                var codeGenCode = plan.Steps
-                    .FirstOrDefault(s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Action)
-                    ?.Parameters?.GetValueOrDefault("code")?.ToString();
-
-                var retrievedKnowledge = _contextManager.ContextCache?.Extra
-                    ?.GetValueOrDefault("retrieved_knowledge_sources") as List<string>;
-
-                _hub?.Publish(new LearningEvent("AgentOrchestrator",
-                    LearningEventTypes.PlanCompleted,
-                    new PlanCompletedData
-                    {
-                        Goal = plan.Goal,
-                        SkillsUsed = skillsUsed,
-                        Intent = analysis?.Intent,
-                        Category = analysis?.Category,
-                        StepCount = plan.Steps.Count,
-                        FinalAnswer = plan.FinalAnswer?.Length > 200
-                            ? plan.FinalAnswer[..200] : plan.FinalAnswer,
-                        CodeGenCode = codeGenCode,
-                        KnowledgeSources = retrievedKnowledge
-                    }));
-            }
-            catch { /* non-critical */ }
-
-            // 5f2. Context usage tracking — learn which context sections are actually useful
-            try
-            {
-                if (_contextUsageTracker is not null && plan.FinalAnswer is not null)
-                {
-                    _contextUsageTracker.TrackUsage(
-                        context.Entries.Keys, plan.FinalAnswer, analysis?.Intent);
-
-                    if (_contextOptimizer is not null)
-                    {
-                        var adjustments = _contextUsageTracker.GetPriorityAdjustments();
-                        if (adjustments.Count > 0)
-                            _contextOptimizer.UpdateLearnedPriorities(adjustments);
-                    }
-                }
-            }
-            catch { /* non-critical */ }
-
-            // 5g. Learning Cortex — run analysis cycle (non-blocking)
-            if (_learningCortex is not null)
-            {
-                _ = Task.Run(() =>
-                {
-                    try
-                    {
-                        _learningCortex.Analyze(
-                            _interactionRecorder, _planReplayStore,
-                            _improvementStore, _memory?.Analytics,
-                            _fewShotLearning, _patternLearning);
-                    }
-                    catch { /* non-critical background analysis */ }
-                }, CancellationToken.None);
-            }
-
-            // 5h. Notify persistence manager
-            _persistenceManager?.NotifyChange();
-
-            // 5i. Persist recipe store (non-blocking)
-            if (_recipeStore != null)
-                _ = Task.Run(() => _recipeStore.SaveAsync(CancellationToken.None));
-        }
+            PostProcessCompletedPlan(plan, userMessage, effectiveQuery, analysis, context);
 
         return plan;
     }
 
-    private async Task RecordPlanAsync(
-        AgentPlan plan, QueryAnalysis? analysis, CancellationToken ct)
+    /// <summary>
+    /// Executes a single tool call: confirmation, warnings capture, skill execution,
+    /// learning feedback, and observation recording.
+    /// </summary>
+    private async Task ProcessToolCallAsync(
+        ToolCall toolCall, AgentPlan plan, List<ChatMessage> messages,
+        string effectiveQuery, AutomationMode automationMode,
+        CancellationToken ct)
     {
-        try
+        if (automationMode != AutomationMode.AutoExecute
+            && DestructiveSkills.Contains(toolCall.FunctionName))
         {
-            await (_planReplayStore?.RecordSuccessfulPlan(plan, analysis, ct) ?? Task.CompletedTask);
-        }
-        catch { /* non-critical */ }
-    }
-
-    private async Task SelfEvaluateAsync(
-        AgentPlan plan, QueryAnalysis? analysis, CancellationToken ct)
-    {
-        try
-        {
-            var eval = await _selfEvaluator!.EvaluatePlan(plan, analysis, ct);
-
-            if (!string.IsNullOrWhiteSpace(eval.ImprovementSuggestion))
-                _improvementStore?.RecordImprovement(
-                    analysis?.Intent ?? "unknown",
-                    eval.ImprovementSuggestion,
-                    eval.OverallScore - 5.0);
-
-            if (eval is { ShouldSaveAsTemplate: true, OverallScore: >= 7.0 } && _compositeEngine != null)
+            var confirmed = await RequestConfirmation(toolCall, ct);
+            if (!confirmed)
             {
-                var candidates = _compositeEngine.DiscoverCandidates(minUseCount: 2);
-                foreach (var c in candidates.Take(2))
-                    _compositeEngine.PromoteToCompositeSkill(c);
+                var cancelMsg = ChatMessage.FromTool(toolCall.FunctionName,
+                    "{\"success\":false,\"message\":\"User cancelled the operation.\"}");
+                messages.Add(cancelMsg);
+                _history.Add(cancelMsg);
+
+                plan.Steps.Add(new AgentStep
+                {
+                    Type = AgentStepType.Observation,
+                    Content = "User cancelled the destructive action.",
+                    SkillName = toolCall.FunctionName
+                });
+                return;
             }
         }
-        catch { /* non-critical background evaluation */ }
+
+        var actionStep = new AgentStep
+        {
+            Type = AgentStepType.Action,
+            SkillName = toolCall.FunctionName,
+            Parameters = toolCall.Arguments,
+            Content = $"Executing: {toolCall.FunctionName}"
+        };
+        plan.Steps.Add(actionStep);
+        OnStepExecuted?.Invoke(actionStep);
+
+        var warningsDelta = await CaptureWarningsBeforeAsync(toolCall.FunctionName);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await _skillExecutor.ExecuteAsync(
+            toolCall.FunctionName, toolCall.Arguments, ct);
+        sw.Stop();
+
+        warningsDelta = await CaptureWarningsAfterAsync(toolCall.FunctionName, warningsDelta);
+
+        _agentLogger?.LogToolExecution(
+            toolCall.FunctionName, toolCall.Arguments,
+            result.Success, sw.Elapsed.TotalMilliseconds, warningsDelta);
+
+        _memory?.OnSkillExecuted(toolCall.FunctionName, result.Success, sw.Elapsed.TotalMilliseconds);
+
+        if (toolCall.FunctionName == "execute_revit_code")
+            _memory?.OnCodeGenAttempt(result.Success, result.Success, result.Success ? null : "compile_error");
+
+        _dynamicSkillRegistry?.RecordUsage(toolCall.FunctionName);
+
+        RecordSkillLearning(toolCall, result, effectiveQuery);
+        TrackVisualizationPairing(toolCall.FunctionName, toolCall.Arguments, result.Success);
+
+        var resultJson = result.ToJson();
+        if (warningsDelta is { Delta: not 0 })
+            resultJson = resultJson.TrimEnd('}') + $",\"warnings_delta\":\"{warningsDelta.ToSummary()}\"}}";
+
+        var toolMessage = ChatMessage.FromTool(toolCall.FunctionName, resultJson);
+        messages.Add(toolMessage);
+        _history.Add(toolMessage);
+
+        var observationContent = result.Message;
+        if (warningsDelta is { IsRegression: true })
+            observationContent += $"\n{warningsDelta.ToSummary()}";
+
+        var observationStep = new AgentStep
+        {
+            Type = AgentStepType.Observation,
+            SkillName = toolCall.FunctionName,
+            Content = observationContent
+        };
+        plan.Steps.Add(observationStep);
+        OnStepExecuted?.Invoke(observationStep);
+    }
+
+    private async Task<WarningsDelta?> CaptureWarningsBeforeAsync(string skillName)
+    {
+        if (!DestructiveSkills.Contains(skillName) || OnCaptureWarnings == null) return null;
+        try
+        {
+            var capture = await OnCaptureWarnings.Invoke();
+            _warningsDeltaTracker.CaptureBeforeState(capture.WarningCount, capture.WarningDetails);
+        }
+        catch { }
+        return null;
+    }
+
+    private async Task<WarningsDelta?> CaptureWarningsAfterAsync(string skillName, WarningsDelta? _)
+    {
+        if (!DestructiveSkills.Contains(skillName) || OnCaptureWarnings == null) return null;
+        try
+        {
+            var capture = await OnCaptureWarnings.Invoke();
+            return _warningsDeltaTracker.ComputeDelta(capture.WarningCount, capture.WarningDetails);
+        }
+        catch { return null; }
+    }
+
+    private void RecordSkillLearning(ToolCall toolCall, SkillResult result, string effectiveQuery)
+    {
+        if (result.Success)
+        {
+            _fewShotLearning?.RecordSuccess(effectiveQuery, toolCall.FunctionName, toolCall.Arguments);
+
+            if (_lastFailedSkillName is not null)
+            {
+                _failureRecovery?.RecordRecovery(
+                    _lastFailedSkillName, toolCall.FunctionName,
+                    _lastFailedSkillError ?? "", recoverySucceeded: true);
+                _learningCortex?.SkillCorrelator.RecordFailureRecovery(
+                    _lastFailedSkillName, toolCall.FunctionName, recovered: true);
+
+                _hub?.Publish(new LearningEvent("AgentOrchestrator",
+                    LearningEventTypes.SkillRecovery,
+                    new SkillRecoveryData
+                    {
+                        FailedSkill = _lastFailedSkillName,
+                        RecoverySkill = toolCall.FunctionName,
+                        FailureError = _lastFailedSkillError ?? ""
+                    }));
+
+                _lastFailedSkillName = null;
+                _lastFailedSkillError = null;
+            }
+        }
+        else if (_failureRecovery is not null)
+        {
+            _failureRecovery.RecordFailure(
+                toolCall.FunctionName, toolCall.Arguments,
+                result.Message ?? "unknown error");
+
+            _hub?.Publish(new LearningEvent("AgentOrchestrator",
+                LearningEventTypes.SkillFailure,
+                new SkillFailureData
+                {
+                    SkillName = toolCall.FunctionName,
+                    Arguments = toolCall.Arguments,
+                    Error = result.Message ?? "unknown error"
+                }));
+
+            _lastFailedSkillName = toolCall.FunctionName;
+            _lastFailedSkillError = result.Message;
+
+            var fallback = _learningCortex?.SkillCorrelator.GetBestFallback(toolCall.FunctionName);
+            var recoveryAdvice = _failureRecovery.GetRecoveryAdvice(
+                toolCall.FunctionName, result.Message ?? "");
+
+            if (fallback is not null && recoveryAdvice is null)
+                recoveryAdvice = $"Try '{fallback}' as fallback (learned from past recoveries).";
+            else if (fallback is not null && recoveryAdvice is not null)
+                recoveryAdvice += $" Also consider '{fallback}' as learned fallback.";
+
+            if (recoveryAdvice is not null)
+                result.Message += $"\n[Recovery hint: {recoveryAdvice}]";
+        }
+    }
+
+    /// <summary>
+    /// Phase 5: Post-processing — Self-Learning Pipeline.
+    /// Runs synchronous learning steps inline, background tasks via RunInBackground.
+    /// </summary>
+    private void PostProcessCompletedPlan(
+        AgentPlan plan, string userMessage, string effectiveQuery,
+        QueryAnalysis? analysis, ContextData context)
+    {
+        if (_dynamicGlossary != null && plan.FinalAnswer != null)
+            _dynamicGlossary.LearnFromCorrection(userMessage, plan.FinalAnswer);
+
+        try { _interactionRecorder?.Record(plan, analysis); }
+        catch (Exception ex) { _agentLogger?.LogBackgroundError("InteractionRecord", ex.Message); }
+
+        if (plan.Steps.Any(s => s.Type == AgentStepType.Action))
+            RunInBackground(
+                async () => await (_planReplayStore?.RecordSuccessfulPlan(plan, analysis) ?? Task.CompletedTask),
+                "RecordPlan");
+
+        var actionStepCount = plan.Steps.Count(s => s.Type == AgentStepType.Action);
+        if (_selfEvaluator != null && actionStepCount >= SelfEvalMinSteps)
+            RunInBackground(() => SelfEvaluateAsync(plan, analysis), "SelfEvaluate");
+
+        try
+        {
+            var retrievedKnowledge = _contextManager.ContextCache?.Extra
+                ?.GetValueOrDefault("retrieved_knowledge_sources") as List<string>;
+            var codeGenCode = plan.Steps
+                .FirstOrDefault(s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Action)
+                ?.Content;
+            _recipeStore?.RecordFromPlan(plan, analysis, retrievedKnowledge, codeGenCode);
+        }
+        catch (Exception ex) { _agentLogger?.LogBackgroundError("RecordRecipe", ex.Message); }
+
+        try { LearnFromCodeGenSteps(plan, effectiveQuery, analysis); }
+        catch (Exception ex) { _agentLogger?.LogBackgroundError("LearnCodeGen", ex.Message); }
+
+        try { _learningCortex?.Ingest(plan, analysis, _memory?.Analytics); }
+        catch (Exception ex) { _agentLogger?.LogBackgroundError("CortexIngest", ex.Message); }
+
+        PublishPlanCompleted(plan, analysis);
+        TrackContextUsage(plan, analysis, context);
+
+        if (_learningCortex is not null)
+            RunInBackground(() =>
+            {
+                _learningCortex.Analyze(
+                    _interactionRecorder, _planReplayStore,
+                    _improvementStore, _memory?.Analytics,
+                    _fewShotLearning, _patternLearning);
+                return Task.CompletedTask;
+            }, "CortexAnalyze");
+
+        _persistenceManager?.NotifyChange();
+
+        if (_recipeStore != null)
+            RunInBackground(() => _recipeStore.SaveAsync(CancellationToken.None), "SaveRecipes");
+    }
+
+    private void LearnFromCodeGenSteps(AgentPlan plan, string effectiveQuery, QueryAnalysis? analysis)
+    {
+        if (_dynamicExamplesLibrary == null) return;
+
+        foreach (var step in plan.Steps.Where(
+            s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Observation))
+        {
+            var actionStep = plan.Steps
+                .LastOrDefault(s => s.SkillName == "execute_revit_code"
+                    && s.Type == AgentStepType.Action
+                    && plan.Steps.IndexOf(s) < plan.Steps.IndexOf(step));
+            if (actionStep?.Content != null && !step.Content.Contains("FAILED"))
+            {
+                _dynamicExamplesLibrary.LearnFromSuccess(
+                    actionStep.Content, plan.Goal, effectiveQuery, analysis, 0);
+            }
+        }
+        RunInBackground(
+            () => _dynamicExamplesLibrary.SaveAsync(CancellationToken.None),
+            "SaveDynamicExamples");
+    }
+
+    private void PublishPlanCompleted(AgentPlan plan, QueryAnalysis? analysis)
+    {
+        try
+        {
+            var skillsUsed = plan.Steps
+                .Where(s => s.Type == AgentStepType.Action && s.SkillName is not null)
+                .Select(s => s.SkillName!)
+                .ToList();
+
+            var codeGenCode = plan.Steps
+                .FirstOrDefault(s => s.SkillName == "execute_revit_code" && s.Type == AgentStepType.Action)
+                ?.Parameters?.GetValueOrDefault("code")?.ToString();
+
+            var retrievedKnowledge = _contextManager.ContextCache?.Extra
+                ?.GetValueOrDefault("retrieved_knowledge_sources") as List<string>;
+
+            _hub?.Publish(new LearningEvent("AgentOrchestrator",
+                LearningEventTypes.PlanCompleted,
+                new PlanCompletedData
+                {
+                    Goal = plan.Goal,
+                    SkillsUsed = skillsUsed,
+                    Intent = analysis?.Intent,
+                    Category = analysis?.Category,
+                    StepCount = plan.Steps.Count,
+                    FinalAnswer = plan.FinalAnswer?.Length > 200
+                        ? plan.FinalAnswer[..200] : plan.FinalAnswer,
+                    CodeGenCode = codeGenCode,
+                    KnowledgeSources = retrievedKnowledge
+                }));
+        }
+        catch (Exception ex) { _agentLogger?.LogBackgroundError("PublishPlanCompleted", ex.Message); }
+    }
+
+    private void TrackContextUsage(AgentPlan plan, QueryAnalysis? analysis, ContextData context)
+    {
+        try
+        {
+            if (_contextUsageTracker is not null && plan.FinalAnswer is not null)
+            {
+                _contextUsageTracker.TrackUsage(
+                    context.Entries.Keys, plan.FinalAnswer, analysis?.Intent);
+
+                if (_contextOptimizer is not null)
+                {
+                    var adjustments = _contextUsageTracker.GetPriorityAdjustments();
+                    if (adjustments.Count > 0)
+                        _contextOptimizer.UpdateLearnedPriorities(adjustments);
+                }
+            }
+        }
+        catch (Exception ex) { _agentLogger?.LogBackgroundError("TrackContextUsage", ex.Message); }
+    }
+
+    private async Task SelfEvaluateAsync(AgentPlan plan, QueryAnalysis? analysis)
+    {
+        var eval = await _selfEvaluator!.EvaluatePlan(plan, analysis);
+
+        if (!string.IsNullOrWhiteSpace(eval.ImprovementSuggestion))
+            _improvementStore?.RecordImprovement(
+                analysis?.Intent ?? "unknown",
+                eval.ImprovementSuggestion,
+                eval.OverallScore - 5.0);
+
+        if (eval is { ShouldSaveAsTemplate: true, OverallScore: >= 7.0 } && _compositeEngine != null)
+        {
+            var candidates = _compositeEngine.DiscoverCandidates(minUseCount: 2);
+            foreach (var c in candidates.Take(2))
+                _compositeEngine.PromoteToCompositeSkill(c);
+        }
     }
 
     private async Task<bool> RequestConfirmation(ToolCall toolCall, CancellationToken ct)
@@ -1194,6 +1210,21 @@ public class AgentOrchestrator
         {
             _lastNonVizSkillName = skillName;
         }
+    }
+
+    /// <summary>
+    /// Runs a background task with error logging instead of silently swallowing exceptions.
+    /// </summary>
+    private void RunInBackground(Func<Task> action, string operationName)
+    {
+        _ = Task.Run(async () =>
+        {
+            try { await action(); }
+            catch (Exception ex)
+            {
+                _agentLogger?.LogBackgroundError(operationName, ex.Message);
+            }
+        });
     }
 
     public void ClearHistory() => _history.Clear();

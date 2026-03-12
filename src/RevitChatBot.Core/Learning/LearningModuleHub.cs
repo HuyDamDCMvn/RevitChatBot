@@ -33,18 +33,29 @@ public class LearningModuleHub
 
     /// <summary>
     /// Subscribe to specific event types. Handler is invoked for matching events only.
+    /// Returns IDisposable that removes the subscription when disposed.
     /// </summary>
-    public void Subscribe(string[] eventTypes, Action<LearningEvent> handler)
+    public IDisposable Subscribe(string[] eventTypes, Action<LearningEvent> handler)
     {
-        lock (_lock) { _subscriptions.Add((eventTypes, handler)); }
+        var entry = (eventTypes, handler);
+        lock (_lock) { _subscriptions.Add(entry); }
+        return new HubSubscription(this, entry);
     }
 
     /// <summary>
     /// Subscribe to ALL events.
+    /// Returns IDisposable that removes the subscription when disposed.
     /// </summary>
-    public void SubscribeAll(Action<LearningEvent> handler)
+    public IDisposable SubscribeAll(Action<LearningEvent> handler)
     {
-        lock (_lock) { _subscriptions.Add(([], handler)); }
+        var entry = (Array.Empty<string>(), handler);
+        lock (_lock) { _subscriptions.Add(entry); }
+        return new HubSubscription(this, entry);
+    }
+
+    internal void Unsubscribe((string[] EventTypes, Action<LearningEvent> Handler) entry)
+    {
+        lock (_lock) { _subscriptions.Remove(entry); }
     }
 
     /// <summary>
@@ -196,4 +207,34 @@ public class SkillRecoveryData
     public string FailedSkill { get; set; } = "";
     public string RecoverySkill { get; set; } = "";
     public string FailureError { get; set; } = "";
+}
+
+public class SkillFailureData
+{
+    public string SkillName { get; set; } = "";
+    public Dictionary<string, object?>? Arguments { get; set; }
+    public string Error { get; set; } = "";
+}
+
+/// <summary>
+/// Disposable subscription handle returned by LearningModuleHub.Subscribe.
+/// </summary>
+internal sealed class HubSubscription : IDisposable
+{
+    private LearningModuleHub? _hub;
+    private readonly (string[] EventTypes, Action<LearningEvent> Handler) _entry;
+
+    internal HubSubscription(
+        LearningModuleHub hub,
+        (string[] EventTypes, Action<LearningEvent> Handler) entry)
+    {
+        _hub = hub;
+        _entry = entry;
+    }
+
+    public void Dispose()
+    {
+        _hub?.Unsubscribe(_entry);
+        _hub = null;
+    }
 }

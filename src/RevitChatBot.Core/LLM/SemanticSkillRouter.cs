@@ -157,7 +157,9 @@ public class SemanticSkillRouter
     private static readonly HashSet<string> AggregateKeywords = new(StringComparer.OrdinalIgnoreCase)
     {
         "thống kê", "report", "aggregate", "nhóm theo", "group by", "theo từng tầng",
-        "theo system", "breakdown", "summary report", "tổng hợp", "count per"
+        "theo system", "breakdown", "summary report", "tổng hợp", "count per",
+        "theo category", "theo loại", "by category", "phân loại", "đếm element",
+        "element count", "bao nhiêu element"
     };
 
     private static readonly HashSet<string> HeadroomKeywords = new(StringComparer.OrdinalIgnoreCase)

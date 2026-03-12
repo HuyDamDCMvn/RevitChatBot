@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using RevitChatBot.Core.Agent;
+
 namespace RevitChatBot.Core.Context;
 
 public class ContextManager
@@ -6,6 +9,10 @@ public class ContextManager
     private object? _revitDocument;
     private RevitContextCache? _contextCache;
     private Func<Func<object, object?>, Task<object?>>? _revitApiInvoker;
+    private AgentLogger? _logger;
+
+    private const int ProviderTimeoutMs = 3000;
+    private const int SlowProviderThresholdMs = 1000;
 
     public RevitContextCache? ContextCache => _contextCache;
 
@@ -17,6 +24,11 @@ public class ContextManager
     public void SetContextCache(RevitContextCache cache)
     {
         _contextCache = cache;
+    }
+
+    public void SetLogger(AgentLogger? logger)
+    {
+        _logger = logger;
     }
 
     /// <summary>
@@ -46,7 +58,6 @@ public class ContextManager
         var revitProviders = sorted.Where(p => p.NeedsRevitApi).ToList();
         var backgroundProviders = sorted.Where(p => !p.NeedsRevitApi).ToList();
 
-        // Revit-dependent providers run on the Revit main thread via ExternalEvent
         if (_revitDocument != null && _revitApiInvoker != null && revitProviders.Count > 0)
         {
             try
@@ -56,12 +67,19 @@ public class ContextManager
                     var data = new ContextData();
                     foreach (var provider in revitProviders)
                     {
+                        var sw = Stopwatch.StartNew();
                         try
                         {
                             var providerData = provider.GatherAsync(doc).GetAwaiter().GetResult();
+                            sw.Stop();
+                            if (sw.ElapsedMilliseconds > SlowProviderThresholdMs)
+                                _logger?.LogSlowProvider(provider.GetType().Name, sw.ElapsedMilliseconds);
                             data.Merge(providerData);
                         }
-                        catch { }
+                        catch
+                        {
+                            sw.Stop();
+                        }
                     }
                     return data;
                 });
@@ -72,13 +90,28 @@ public class ContextManager
             catch { }
         }
 
-        // Non-Revit providers run on the current (background) thread - safe for async HTTP calls
         foreach (var provider in backgroundProviders)
         {
             try
             {
-                var data = await provider.GatherAsync(_revitDocument);
-                result.Merge(data);
+                using var cts = new CancellationTokenSource(ProviderTimeoutMs);
+                var sw = Stopwatch.StartNew();
+                var task = provider.GatherAsync(_revitDocument);
+                var completed = await Task.WhenAny(task, Task.Delay(ProviderTimeoutMs, cts.Token));
+                sw.Stop();
+
+                if (completed == task)
+                {
+                    var data = await task;
+                    if (sw.ElapsedMilliseconds > SlowProviderThresholdMs)
+                        _logger?.LogSlowProvider(provider.GetType().Name, sw.ElapsedMilliseconds);
+                    result.Merge(data);
+                }
+                else
+                {
+                    _logger?.LogSlowProvider(
+                        $"{provider.GetType().Name}[TIMEOUT]", ProviderTimeoutMs);
+                }
             }
             catch { }
         }

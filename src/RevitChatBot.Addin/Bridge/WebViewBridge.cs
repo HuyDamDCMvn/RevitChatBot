@@ -85,6 +85,7 @@ public class WebViewBridge : IDisposable
     private CodeAutoFixer? _codeAutoFixer;
     private OllamaCloudRouter? _cloudRouter;
     private CancellationTokenSource? _pullCts;
+    private readonly List<IDisposable> _hubSubscriptions = [];
 
     private static readonly (string Name, string Description, string MinVram)[] RecommendedCodeGenModels =
     [
@@ -129,6 +130,7 @@ public class WebViewBridge : IDisposable
         var addinDir = Path.GetDirectoryName(
             System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
         _agentLogger = new AgentLogger(Path.Combine(addinDir, "logs"));
+        contextManager.SetLogger(_agentLogger);
 
         RegisterMEPComponents(skillRegistry, contextManager);
         RegisterKnowledge(skillRegistry, contextManager);
@@ -295,15 +297,42 @@ public class WebViewBridge : IDisposable
         WireVisualizationLearning();
 
         _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-        _ = AutoDetectModelAsync();
-        _ = CheckCodeGenModelAsync();
-        _ = InitializeKnowledgeAsync();
-        _ = InitializeMemoryAsync();
-        _ = InitializeCodeGenModulesAsync();
-        _ = InitializeLLMModulesAsync();
-        _ = InitializeSelfTrainingModulesAsync();
-        _ = InitializeLearningCortexAsync();
-        _ = InitializeCalcStoreAsync();
+        _ = InitializeAllAsync();
+    }
+
+    /// <summary>
+    /// Phased async initialization: groups modules by dependency order.
+    /// Phase 1: Model + independent data stores (no cross-deps)
+    /// Phase 2: Modules that depend on Phase 1 (codegen needs knowledge, training needs memory)
+    /// Phase 3: Non-critical suggestion (CodeGen model check)
+    /// </summary>
+    private async Task InitializeAllAsync()
+    {
+        try
+        {
+            // Phase 1: Model detection + independent data stores (parallel)
+            await Task.WhenAll(
+                AutoDetectModelAsync(),
+                InitializeKnowledgeAsync(),
+                InitializeLLMModulesAsync(),
+                InitializeLearningCortexAsync(),
+                InitializeCalcStoreAsync());
+
+            // Phase 2: Modules depending on Phase 1 (parallel)
+            await Task.WhenAll(
+                InitializeMemoryAsync(),
+                InitializeCodeGenModulesAsync());
+
+            // Phase 3: Depends on Phase 2 (memory + codegen ready)
+            await InitializeSelfTrainingModulesAsync();
+
+            // Phase 4: Non-critical background suggestion
+            _ = CheckCodeGenModelAsync();
+        }
+        catch
+        {
+            // Initialization failures are non-fatal — individual init methods handle their own errors
+        }
     }
 
     private void RegisterMEPComponents(
@@ -578,6 +607,8 @@ public class WebViewBridge : IDisposable
     {
         if (_learningHub is null) return;
 
+        void Track(IDisposable sub) => _hubSubscriptions.Add(sub);
+
         // ═══════════════════════════════════════════════════════
         // 1. REGISTER all modules not yet in hub
         // ═══════════════════════════════════════════════════════
@@ -603,11 +634,11 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_skillKnowledgeIndex is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.SkillRegistered], _ =>
+            Track(_learningHub.Subscribe([LearningEventTypes.SkillRegistered], _ =>
             {
                 try { _skillKnowledgeIndex.RebuildIndex(); }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -615,7 +646,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_patternLearning is not null)
         {
-            _learningHub.Subscribe(
+            Track(_learningHub.Subscribe(
                 [LearningEventTypes.CodeGenSuccess, LearningEventTypes.CodeGenFailure], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
@@ -624,12 +655,12 @@ public class WebViewBridge : IDisposable
                     _patternLearning.RecordSuccess(data.Code, data.Query, data.ExecutionMs);
                 else
                     _patternLearning.RecordFailure(data.Code, data.Error ?? "");
-            });
+            }));
         }
 
         if (_codeGenLibrary is not null)
         {
-            _learningHub.Subscribe(
+            Track(_learningHub.Subscribe(
                 [LearningEventTypes.CodeGenSuccess, LearningEventTypes.CodeGenFailure], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
@@ -642,12 +673,12 @@ public class WebViewBridge : IDisposable
                         _codeGenLibrary.RecordFailure(data.Query, data.Code, data.Error ?? "");
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         if (_dynamicExamplesLibrary is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
                 if (data is null) return;
@@ -657,12 +688,12 @@ public class WebViewBridge : IDisposable
                         data.Code, data.Query, data.Query, null, 0);
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         if (_dynamicGlossary is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
                 if (data is null) return;
@@ -683,12 +714,12 @@ public class WebViewBridge : IDisposable
                     }
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         if (_failureRecovery is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CodeGenFailure], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CodeGenFailure], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
                 if (data is null) return;
@@ -698,12 +729,12 @@ public class WebViewBridge : IDisposable
                         "execute_revit_code", null, data.Error ?? "codegen failure");
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         if (_fewShotLearning is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
                 if (data is null) return;
@@ -714,7 +745,7 @@ public class WebViewBridge : IDisposable
                         new Dictionary<string, object?> { ["code"] = data.Code });
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -722,7 +753,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_contextUsageTracker is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
             {
                 try
                 {
@@ -736,12 +767,12 @@ public class WebViewBridge : IDisposable
                     }
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         if (_compositeEngine is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
             {
                 try
                 {
@@ -758,12 +789,12 @@ public class WebViewBridge : IDisposable
                     }
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         if (_recipeStore is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
             {
                 var data = evt.GetData<PlanCompletedData>();
                 if (data is null || data.SkillsUsed.Count == 0) return;
@@ -774,12 +805,12 @@ public class WebViewBridge : IDisposable
                         _ = _recipeStore.SaveAsync(CancellationToken.None);
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         if (_improvementStore is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
             {
                 var data = evt.GetData<PlanCompletedData>();
                 if (data is null) return;
@@ -788,7 +819,7 @@ public class WebViewBridge : IDisposable
                     _improvementStore.GetImprovementHints(data.Intent ?? "unknown");
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -796,11 +827,11 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_skillKnowledgeIndex is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CompositeDiscovered], _ =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CompositeDiscovered], _ =>
             {
                 try { _skillKnowledgeIndex.RebuildIndex(); }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -808,7 +839,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_vizLearner is not null)
         {
-            _learningHub.Subscribe(
+            Track(_learningHub.Subscribe(
                 [LearningEventTypes.SkillFailure, LearningEventTypes.SkillRecovery], evt =>
             {
                 try
@@ -822,7 +853,7 @@ public class WebViewBridge : IDisposable
                     }
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -830,7 +861,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_contextOptimizer is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.ContextUsed], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.ContextUsed], evt =>
             {
                 var adjustments = evt.GetData<Dictionary<string, double>>();
                 if (adjustments is not null)
@@ -838,7 +869,7 @@ public class WebViewBridge : IDisposable
                     try { _contextOptimizer.UpdateLearnedPriorities(adjustments); }
                     catch { /* non-critical */ }
                 }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -846,7 +877,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_codeAutoFixer is not null && _patternLearning is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
             {
                 if (evt.Source != "PatternLearning") return;
                 try
@@ -856,7 +887,7 @@ public class WebViewBridge : IDisposable
                         _codeAutoFixer.UpdateLearnedFixes(fixes);
                 }
                 catch { /* non-critical */ }
-            });
+            }));
 
             try
             {
@@ -872,7 +903,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_interactionRecorder is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
             {
                 var data = evt.GetData<PlanCompletedData>();
                 if (data is null) return;
@@ -881,7 +912,7 @@ public class WebViewBridge : IDisposable
                     _interactionRecorder.RecordFromEvent(data);
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -889,7 +920,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_codeTemplateStore is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
                 if (data is null || data.Code.Length < 50) return;
@@ -902,7 +933,7 @@ public class WebViewBridge : IDisposable
                         data.Category);
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -910,7 +941,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_vizComposer is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanCompleted], evt =>
             {
                 var data = evt.GetData<PlanCompletedData>();
                 if (data is null || data.SkillsUsed.Count < 2) return;
@@ -919,7 +950,7 @@ public class WebViewBridge : IDisposable
                     _vizComposer.DiscoverVisualWorkflows();
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -937,10 +968,10 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_codeTemplateStore is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.KnowledgeIndexed], _ =>
+            Track(_learningHub.Subscribe([LearningEventTypes.KnowledgeIndexed], _ =>
             {
                 // New knowledge means potential new code templates
-            });
+            }));
         }
 
         // ═══════════════════════════════════════════════════════
@@ -948,7 +979,7 @@ public class WebViewBridge : IDisposable
         // ═══════════════════════════════════════════════════════
         if (_recipeStore is not null)
         {
-            _learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
+            Track(_learningHub.Subscribe([LearningEventTypes.CodeGenSuccess], evt =>
             {
                 var data = evt.GetData<CodeGenEventData>();
                 if (data is null) return;
@@ -958,7 +989,7 @@ public class WebViewBridge : IDisposable
                         data.Query, data.Code, data.Intent, data.Category);
                 }
                 catch { /* non-critical */ }
-            });
+            }));
         }
     }
 
@@ -1562,27 +1593,45 @@ public class WebViewBridge : IDisposable
 
         _ollamaService.UpdateOptions(opts =>
         {
-            if (data.TryGetValue("model", out var model) && model is string m)
-                opts.Model = m;
+            if (data.TryGetValue("model", out var model))
+            {
+                var m = model?.ToString();
+                if (!string.IsNullOrEmpty(m)) opts.Model = m;
+            }
             if (data.TryGetValue("temperature", out var temp) && temp is not null
                 && double.TryParse(temp.ToString(), out var t))
                 opts.Temperature = t;
-            if (data.TryGetValue("ollamaUrl", out var url) && url is string u)
-                opts.BaseUrl = u;
-            if (data.TryGetValue("cloudBaseUrl", out var cloudUrl) && cloudUrl is string cu)
-                opts.CloudBaseUrl = cu;
-            if (data.TryGetValue("cloudApiKey", out var cloudKey) && cloudKey is string ck)
-                opts.CloudApiKey = ck;
-            if (data.TryGetValue("cloudModel", out var cloudModel) && cloudModel is string cm)
-                opts.CloudModel = cm;
+            if (data.TryGetValue("ollamaUrl", out var url))
+            {
+                var u = url?.ToString();
+                if (!string.IsNullOrEmpty(u)) opts.BaseUrl = u;
+            }
+            if (data.TryGetValue("cloudBaseUrl", out var cloudUrl))
+            {
+                var cu = cloudUrl?.ToString();
+                if (!string.IsNullOrEmpty(cu)) opts.CloudBaseUrl = cu;
+            }
+            if (data.TryGetValue("cloudApiKey", out var cloudKey))
+            {
+                var ck = cloudKey?.ToString();
+                if (!string.IsNullOrEmpty(ck)) opts.CloudApiKey = ck;
+            }
+            if (data.TryGetValue("cloudModel", out var cloudModel))
+            {
+                var cm = cloudModel?.ToString();
+                if (!string.IsNullOrEmpty(cm)) opts.CloudModel = cm;
+            }
             if (data.TryGetValue("think", out var think) && think is not null
                 && bool.TryParse(think.ToString(), out var thinkVal))
                 opts.Think = thinkVal;
             if (data.TryGetValue("logprobs", out var lp) && lp is not null
                 && bool.TryParse(lp.ToString(), out var lpVal))
                 opts.Logprobs = lpVal;
-            if (data.TryGetValue("codeGenModel", out var cgm) && cgm is string cgmStr)
+            if (data.TryGetValue("codeGenModel", out var cgm))
+            {
+                var cgmStr = cgm?.ToString();
                 opts.CodeGenModel = string.IsNullOrWhiteSpace(cgmStr) ? null : cgmStr;
+            }
         });
 
         _cloudRouter?.TryInitializeCodeGen();
@@ -1758,8 +1807,8 @@ public class WebViewBridge : IDisposable
     private async Task HandleModelPullAsync(Dictionary<string, object?>? data)
     {
         if (data is null || _ollamaService is null) return;
-        if (!data.TryGetValue("modelName", out var nameObj) || nameObj is not string modelName)
-            return;
+        var modelName = data.TryGetValue("modelName", out var nameObj) ? nameObj?.ToString() : null;
+        if (string.IsNullOrWhiteSpace(modelName)) return;
 
         var setAsCodeGen = data.TryGetValue("setAsCodeGen", out var flag)
             && bool.TryParse(flag?.ToString(), out var flagVal) && flagVal;
@@ -1833,8 +1882,8 @@ public class WebViewBridge : IDisposable
     private void HandleCodeGenModelSet(Dictionary<string, object?>? data)
     {
         if (data is null || _ollamaService is null) return;
-        if (!data.TryGetValue("modelName", out var nameObj) || nameObj is not string modelName)
-            return;
+        var modelName = data.TryGetValue("modelName", out var nameObj) ? nameObj?.ToString() : null;
+        if (string.IsNullOrWhiteSpace(modelName)) return;
 
         _ollamaService.UpdateOptions(o =>
             o.CodeGenModel = string.IsNullOrWhiteSpace(modelName) ? null : modelName);
@@ -1860,6 +1909,13 @@ public class WebViewBridge : IDisposable
     {
         if (_webView.CoreWebView2 is not null)
             _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+
+        foreach (var sub in _hubSubscriptions)
+        {
+            try { sub.Dispose(); }
+            catch { }
+        }
+        _hubSubscriptions.Clear();
 
         _chatSession?.StopSelfTraining();
         _ = SaveStateAsync();
