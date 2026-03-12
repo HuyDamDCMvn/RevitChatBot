@@ -350,9 +350,13 @@ public class AgentOrchestrator
             messages.Add(ChatMessage.FromSystem(analysisHint));
         }
 
-        var codeGenContext = await BuildCodeGenContextAsync(effectiveQuery, analysis, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(codeGenContext))
-            messages.Add(ChatMessage.FromSystem(codeGenContext));
+        var needsCodeGen = NeedsCodeGenContext(analysis);
+        if (needsCodeGen)
+        {
+            var codeGenContext = await BuildCodeGenContextAsync(effectiveQuery, analysis, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(codeGenContext))
+                messages.Add(ChatMessage.FromSystem(codeGenContext));
+        }
 
         if (_contextOptimizer != null && analysis != null)
         {
@@ -399,56 +403,56 @@ public class AgentOrchestrator
             messages.Insert(messages.Count - historyForPrompt.Count, ChatMessage.FromSystem(hint));
         }
 
-        // --- Phase 3.7: Plan Replay — inject similar past plan if found ---
-        StoredPlan? replayHint = null;
-        if (_planReplayStore != null)
+        // --- Phase 3.7–3.10: Learning context injection (only for complex intents) ---
+        if (needsCodeGen)
         {
-            try
+            StoredPlan? replayHint = null;
+            if (_planReplayStore != null)
             {
-                replayHint = await _planReplayStore.FindSimilarPlan(
-                    effectiveQuery, analysis, cancellationToken);
+                try
+                {
+                    replayHint = await _planReplayStore.FindSimilarPlan(
+                        effectiveQuery, analysis, cancellationToken);
+                }
+                catch { /* non-critical */ }
             }
-            catch { /* non-critical */ }
-        }
 
-        if (replayHint != null)
-        {
-            var replayContent = "--- SIMILAR PAST PLAN (consider reusing this approach) ---\n" +
-                $"Goal: \"{replayHint.Goal}\"\n" +
-                $"Steps: {string.Join(" → ", replayHint.SkillChain.Select(s => s.SkillName))}\n" +
-                $"Result: {replayHint.FinalAnswerSummary}\n" +
-                $"(used {replayHint.UseCount}x successfully)";
-            messages.Insert(messages.Count - historyForPrompt.Count,
-                ChatMessage.FromSystem(replayContent));
-        }
-
-        // --- Phase 3.8: Improvement Lessons — inject self-evaluation insights ---
-        if (_improvementStore != null && analysis != null)
-        {
-            var hints = _improvementStore.GetImprovementHints(analysis.Intent);
-            if (!string.IsNullOrEmpty(hints))
+            if (replayHint != null)
+            {
+                var replayContent = "--- SIMILAR PAST PLAN (consider reusing this approach) ---\n" +
+                    $"Goal: \"{replayHint.Goal}\"\n" +
+                    $"Steps: {string.Join(" → ", replayHint.SkillChain.Select(s => s.SkillName))}\n" +
+                    $"Result: {replayHint.FinalAnswerSummary}\n" +
+                    $"(used {replayHint.UseCount}x successfully)";
                 messages.Insert(messages.Count - historyForPrompt.Count,
-                    ChatMessage.FromSystem(hints));
-        }
-
-        // --- Phase 3.9: Visualization Learning — inject learned visual patterns ---
-        var vizLearnedContext = _contextManager.ContextCache?.Extra
-            ?.GetValueOrDefault("visual_learned_patterns") as string;
-        if (!string.IsNullOrWhiteSpace(vizLearnedContext))
-            messages.Insert(messages.Count - historyForPrompt.Count,
-                ChatMessage.FromSystem(vizLearnedContext));
-
-        // --- Phase 3.10: Learning Cortex — inject cross-module meta-insights ---
-        if (_learningCortex is not null)
-        {
-            try
-            {
-                var cortexContext = _learningCortex.BuildCortexContext(maxTokenBudget: 600);
-                if (!string.IsNullOrWhiteSpace(cortexContext))
-                    messages.Insert(messages.Count - historyForPrompt.Count,
-                        ChatMessage.FromSystem(cortexContext));
+                    ChatMessage.FromSystem(replayContent));
             }
-            catch { /* non-critical */ }
+
+            if (_improvementStore != null && analysis != null)
+            {
+                var hints = _improvementStore.GetImprovementHints(analysis.Intent);
+                if (!string.IsNullOrEmpty(hints))
+                    messages.Insert(messages.Count - historyForPrompt.Count,
+                        ChatMessage.FromSystem(hints));
+            }
+
+            var vizLearnedContext = _contextManager.ContextCache?.Extra
+                ?.GetValueOrDefault("visual_learned_patterns") as string;
+            if (!string.IsNullOrWhiteSpace(vizLearnedContext))
+                messages.Insert(messages.Count - historyForPrompt.Count,
+                    ChatMessage.FromSystem(vizLearnedContext));
+
+            if (_learningCortex is not null)
+            {
+                try
+                {
+                    var cortexContext = _learningCortex.BuildCortexContext(maxTokenBudget: 600);
+                    if (!string.IsNullOrWhiteSpace(cortexContext))
+                        messages.Insert(messages.Count - historyForPrompt.Count,
+                            ChatMessage.FromSystem(cortexContext));
+                }
+                catch { /* non-critical */ }
+            }
         }
 
         // --- Phase 4: ReAct Loop ---
@@ -637,6 +641,8 @@ public class AgentOrchestrator
         var resultJson = result.ToJson();
         if (warningsDelta is { Delta: not 0 })
             resultJson = resultJson.TrimEnd('}') + $",\"warnings_delta\":\"{warningsDelta.ToSummary()}\"}}";
+
+        resultJson = TruncateToolResult(resultJson);
 
         var toolMessage = ChatMessage.FromTool(toolCall.FunctionName, resultJson);
         messages.Add(toolMessage);
@@ -1080,6 +1086,34 @@ public class AgentOrchestrator
             : $"{RevitApiCheatSheet.GetCheatSheet()}\n\n{RevitApiCheatSheet.GetCommonErrorFixes()}\n\n{CodeExamplesLibrary.GetExamples()}";
 
         return basePrompt + "\n\n" + staticContent;
+    }
+
+    private static bool NeedsCodeGenContext(QueryAnalysis? analysis)
+    {
+        if (analysis is null) return true;
+        return analysis.Intent is "create" or "calculate" or "modify"
+            or "generate" or "codegen" or "analyze";
+    }
+
+    private const int MaxToolResultChars = 3000;
+
+    private static string TruncateToolResult(string json)
+    {
+        if (json.Length <= MaxToolResultChars) return json;
+
+        var dataIdx = json.IndexOf("\"data\":", StringComparison.Ordinal);
+        if (dataIdx < 0) return json[..MaxToolResultChars] + "...(truncated)\"}";
+
+        var prefix = json[..dataIdx];
+        var remaining = MaxToolResultChars - prefix.Length - 60;
+        if (remaining < 200)
+            return json[..MaxToolResultChars] + "...(truncated)\"}";
+
+        var dataSection = json[dataIdx..];
+        if (dataSection.Length > remaining)
+            dataSection = dataSection[..remaining] + "...(truncated)";
+
+        return prefix + dataSection + "}";
     }
 
     private async Task<string> BuildCodeGenContextAsync(
