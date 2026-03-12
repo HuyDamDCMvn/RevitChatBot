@@ -147,6 +147,26 @@ function SystemBubble({ message }: Props) {
   );
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+function ResponseMeta({ message }: { message: ChatMessage }) {
+  if (message.role !== 'assistant' || message.streaming) return null;
+  const parts: string[] = [];
+  if (message.durationMs != null) parts.push(formatDuration(message.durationMs));
+  if (message.tokenEstimate != null && message.tokenEstimate > 0)
+    parts.push(`~${message.tokenEstimate} tok`);
+  if (message.skillsUsed != null && message.skillsUsed > 0)
+    parts.push(`${message.skillsUsed} skill${message.skillsUsed > 1 ? 's' : ''}`);
+  if (parts.length === 0) return null;
+  return (
+    <span className="ml-2 text-gray-300">{parts.join(' · ')}</span>
+  );
+}
+
 export function MessageBubble({ message }: Props) {
   if (message.role === 'system') {
     return <SystemBubble message={message} />;
@@ -183,6 +203,7 @@ export function MessageBubble({ message }: Props) {
             hour: '2-digit',
             minute: '2-digit',
           })}
+          <ResponseMeta message={message} />
         </div>
       </div>
     </div>

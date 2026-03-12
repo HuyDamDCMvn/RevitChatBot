@@ -1011,7 +1011,7 @@ public class WebViewBridge : IDisposable
         if (_skillRouter is not null)
         {
             Track(_learningHub.Subscribe(
-                [LearningEventTypes.SkillRegistered, LearningEventTypes.CompositeDiscovered], _ =>
+                [LearningEventTypes.SkillRegistered, LearningEventTypes.CompositeDiscovered], evt =>
             {
                 try
                 {
@@ -1557,11 +1557,13 @@ public class WebViewBridge : IDisposable
     {
         if (_chatSession is null || string.IsNullOrWhiteSpace(content)) return;
 
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             _knowledgeContextProvider?.SetQuery(content);
 
             var response = await _chatSession.SendMessageAsync(content);
+            sw.Stop();
 
             var lastPlan = _chatSession.LastPlan;
             if (lastPlan is { NeedsClarification: true })
@@ -1578,20 +1580,36 @@ public class WebViewBridge : IDisposable
                 });
             }
 
+            var skillCount = lastPlan?.Steps
+                .Count(s => s.Type == AgentStepType.Action) ?? 0;
+
             SendToUI(new BridgeMessage
             {
                 Type = BridgeMessageTypes.StreamEnd,
-                Content = response
+                Content = response,
+                Data = new Dictionary<string, object?>
+                {
+                    ["durationMs"] = sw.ElapsedMilliseconds,
+                    ["tokenEstimate"] = EstimateTokens(response),
+                    ["skillsUsed"] = skillCount
+                }
             });
         }
         catch (Exception ex)
         {
+            sw.Stop();
             SendToUI(new BridgeMessage
             {
                 Type = BridgeMessageTypes.Error,
                 Content = ex.Message
             });
         }
+    }
+
+    private static int EstimateTokens(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        return (int)Math.Ceiling(text.Length / 3.5);
     }
 
     private void HandlePartialInput(string partialInput)

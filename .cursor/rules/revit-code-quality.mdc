@@ -201,13 +201,27 @@ Learning → CodeGen:
 | codegen_failure | DynamicCodeSkill, LearningCortex | LearningCortex, CodePatternLearning, CodeGenLibrary, FailureRecoveryLearner |
 | skill_failure | AgentOrchestrator | LearningCortex → FailureRecoveryLearner, VisualFeedbackLearner |
 | skill_recovery | AgentOrchestrator, FailureRecoveryLearner | LearningCortex (correlator + tracker), VisualFeedbackLearner |
-| skill_registered | DynamicCodeSkill | SkillKnowledgeIndex (re-index) |
+| skill_registered | DynamicCodeSkill | SkillKnowledgeIndex (re-index), **SemanticSkillRouter (re-embed)** |
 | plan_completed | AgentOrchestrator | LearningCortex, ContextUsageTracker, CompositeSkillEngine, RecipeStore, ImprovementStore, InteractionRecorder, VisualWorkflowComposer |
-| composite_discovered | CompositeSkillEngine, SelfTrainingScheduler | SkillKnowledgeIndex (re-index) |
-| knowledge_indexed | SelfTrainingScheduler | KnowledgeCodeTemplateStore |
+| plan_evaluated | **SelfEvaluator** | **FewShotLearning (boost high-quality skills), RecipeStore (save templates)** |
+| composite_discovered | CompositeSkillEngine, SelfTrainingScheduler | SkillKnowledgeIndex (re-index), **SemanticSkillRouter (re-embed)** |
+| knowledge_indexed | SelfTrainingScheduler | **CodeGenKnowledgeEnricher (invalidate cache), KnowledgeCodeTemplateStore (mark stale)** |
 | context_used | ContextUsageTracker | ContextWindowOptimizer |
-| glossary_updated | DynamicGlossary | (available for future subscribers) |
-| pattern_learned | ImprovementStore | (available for future subscribers) |
+| glossary_updated | **DynamicGlossary (on AddTerm, LearnFromCorrection)** | **PromptCache (invalidate), SkillKnowledgeIndex (rebuild)** |
+| pattern_learned | CodePatternLearning | **PromptCache (invalidate), CodeAutoFixer (sync fixes)** |
+| skill_gap_found | **SelfTrainingScheduler (from SkillGapAnalyzer)** | **DynamicCodeExamplesLibrary (prioritize topic)** |
+
+### Cross-Update Feedback Loops (Learning → CodeGen)
+
+| Source | Target | Mechanism |
+|---|---|---|
+| ImprovementStore | CodeGen prompt | `BuildCodeGenContextAsync()` injects `GetImprovementHints()` |
+| FailureRecoveryLearner | CodeGen prompt | `BuildCodeGenContextAsync()` injects `BuildRecoveryContext()` |
+| CodePatternLearning | CodeAutoFixer | `GetConfirmedFixes()` → `UpdateLearnedFixes()` (via hub sync) |
+| DynamicGlossary | Query normalization | `AgentOrchestrator` calls `NormalizeQuery()` before processing |
+| SelfEvaluator | FewShotLearning | High-score plans boost skill examples via `plan_evaluated` event |
+| SkillGapAnalyzer | DynamicCodeExamples | Gap topics get priority boost for future code generation |
+| PromptCache | All modules | Auto-invalidates when `glossary_updated` or `pattern_learned` fires |
 
 ### Validation
 

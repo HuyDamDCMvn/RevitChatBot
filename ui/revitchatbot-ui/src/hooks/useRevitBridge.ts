@@ -61,17 +61,25 @@ export function useRevitBridge() {
 
         case MessageTypes.STREAM_END: {
           setThinkingText(null);
+          const endData = msg.data as {
+            durationMs?: number; tokenEstimate?: number; skillsUsed?: number;
+          } | undefined;
+          const meta = {
+            durationMs: endData?.durationMs,
+            tokenEstimate: endData?.tokenEstimate,
+            skillsUsed: endData?.skillsUsed,
+          };
           if (streamIdRef.current) {
             const sid = streamIdRef.current;
             const finalContent = msg.content ?? '';
             setMessages((prev) =>
-              prev.map((m) => (m.id === sid ? { ...m, content: finalContent, streaming: false } : m))
+              prev.map((m) => (m.id === sid ? { ...m, content: finalContent, streaming: false, ...meta } : m))
             );
             streamIdRef.current = null;
           } else {
             setMessages((prev) => [
               ...prev,
-              { id: genId(), role: 'assistant', content: msg.content ?? '', timestamp: Date.now() },
+              { id: genId(), role: 'assistant', content: msg.content ?? '', timestamp: Date.now(), ...meta },
             ]);
           }
           setIsLoading(false);

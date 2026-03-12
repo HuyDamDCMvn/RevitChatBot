@@ -16,6 +16,9 @@ export interface ChatMessage {
   clarificationOptions?: string[];
   actionPlan?: ActionPlanData;
   images?: ImageAttachment[];
+  durationMs?: number;
+  tokenEstimate?: number;
+  skillsUsed?: number;
 }
 
 export interface ImageAttachment {
