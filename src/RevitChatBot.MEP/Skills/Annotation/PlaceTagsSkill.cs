@@ -13,7 +13,8 @@ namespace RevitChatBot.MEP.Skills.Annotation;
 [SkillParameter("view_id", "string",
     "Element ID of the target view where tags will be placed", isRequired: true)]
 [SkillParameter("category", "string",
-    "Element category to tag (e.g. 'Ducts', 'Pipes', 'Mechanical Equipment')",
+    "Element category to tag: 'all_mep' for all MEP categories, or specific: " +
+    "'Ducts', 'Pipes', 'Mechanical Equipment', 'Cable Trays', 'Conduits', etc.",
     isRequired: true)]
 [SkillParameter("add_leader", "string",
     "Whether to add a leader line to tags ('true' or 'false', default 'false')",
@@ -50,9 +51,37 @@ public class PlaceTagsSkill : ISkill
         if (string.IsNullOrWhiteSpace(categoryStr))
             return SkillResult.Fail("category is required.");
 
+        var isAllMep = categoryStr.Equals("all_mep", StringComparison.OrdinalIgnoreCase)
+                       || categoryStr.Equals("all", StringComparison.OrdinalIgnoreCase);
+
+        if (isAllMep)
+        {
+            var allCategories = new[] { "Ducts", "Pipes", "Mechanical Equipment", "Cable Trays", "Conduits", "Sprinklers" };
+            var summaries = new List<string>();
+            int totalTagged = 0;
+
+            foreach (var cat in allCategories)
+            {
+                var subParams = new Dictionary<string, object?>(parameters) { ["category"] = cat };
+                var subResult = await ExecuteAsync(context, subParams, cancellationToken);
+                if (subResult.Success)
+                {
+                    dynamic subData = subResult.Data!;
+                    int tagged = (int)subData.tagged;
+                    if (tagged > 0) summaries.Add($"{cat}: {tagged} tagged");
+                    totalTagged += tagged;
+                }
+            }
+
+            return totalTagged > 0
+                ? SkillResult.Ok($"Tagged {totalTagged} elements across {summaries.Count} categories: {string.Join(", ", summaries)}",
+                    new { totalTagged, details = summaries })
+                : SkillResult.Ok("All elements already tagged.", new { totalTagged = 0 });
+        }
+
         var bic = ResolveCategoryByName(categoryStr);
         if (!bic.HasValue)
-            return SkillResult.Fail($"Unsupported category: '{categoryStr}'. Use: Ducts, Pipes, Mechanical Equipment, Cable Trays, Conduits, Sprinklers, Plumbing Fixtures.");
+            return SkillResult.Fail($"Unsupported category: '{categoryStr}'. Use: all_mep, Ducts, Pipes, Mechanical Equipment, Cable Trays, Conduits, Sprinklers, Plumbing Fixtures.");
 
         bool addLeader = string.Equals(addLeaderStr, "true", StringComparison.OrdinalIgnoreCase);
         bool autoArrange = !string.Equals(autoArrangeStr, "false", StringComparison.OrdinalIgnoreCase);

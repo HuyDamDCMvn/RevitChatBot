@@ -16,8 +16,8 @@ namespace RevitChatBot.MEP.Skills.Report;
     "Action: 'list' to show available schedules, 'export' to export data. Default: 'list'.",
     isRequired: false, allowedValues: new[] { "list", "export" })]
 [SkillParameter("schedule_name", "string",
-    "Name of the schedule view to export. Supports partial match. " +
-    "Required when action='export'.",
+    "Name of the schedule view to export. Use 'all' to export every schedule. " +
+    "Supports partial match. Required when action='export'.",
     isRequired: false)]
 [SkillParameter("format", "string",
     "Output format: 'csv' (comma-separated) or 'tsv' (tab-separated). Default: 'csv'.",
@@ -46,6 +46,10 @@ public class ExportScheduleDataSkill : ISkill
 
         if (action == "export" && string.IsNullOrWhiteSpace(scheduleName))
             return SkillResult.Fail("'schedule_name' is required when action='export'.");
+
+        var isExportAll = action == "export"
+            && (scheduleName?.Equals("all", StringComparison.OrdinalIgnoreCase) == true
+                || scheduleName?.Equals("all_schedules", StringComparison.OrdinalIgnoreCase) == true);
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -82,7 +86,34 @@ public class ExportScheduleDataSkill : ISkill
                     };
                 }).ToList();
 
-                return new { action = "list", scheduleCount = items.Count, schedules = items };
+                return (object)new { action = "list", scheduleCount = items.Count, schedules = items };
+            }
+
+            if (isExportAll)
+            {
+                var folder = System.IO.Path.GetDirectoryName(document.PathName);
+                if (string.IsNullOrEmpty(folder))
+                    folder = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
+
+                var exported = new List<object>();
+                foreach (var vs in schedules)
+                {
+                    try
+                    {
+                        var path = ExportSingleSchedule(vs, format, includeHeaders, filterText, folder);
+                        exported.Add(new { name = vs.Name, filePath = path });
+                    }
+                    catch { }
+                }
+
+                return (object)new
+                {
+                    action = "export_all",
+                    exportedCount = exported.Count,
+                    totalSchedules = schedules.Count,
+                    folder,
+                    exported
+                };
             }
 
             var targetSchedule = schedules.FirstOrDefault(vs =>
@@ -91,67 +122,74 @@ public class ExportScheduleDataSkill : ISkill
                     vs.Name.Contains(scheduleName!, StringComparison.OrdinalIgnoreCase));
 
             if (targetSchedule is null)
-                return new { action = "export", error = $"Schedule '{scheduleName}' not found.", scheduleCount = schedules.Count };
+                return (object)new { action = "export", error = $"Schedule '{scheduleName}' not found.", scheduleCount = schedules.Count };
+
+            var targetFolder = System.IO.Path.GetDirectoryName(document.PathName);
+            if (string.IsNullOrEmpty(targetFolder))
+                targetFolder = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
+
+            var filePath = ExportSingleSchedule(targetSchedule, format, includeHeaders, filterText, targetFolder);
 
             var td = targetSchedule.GetTableData();
-            var headerSection = td.GetSectionData(SectionType.Header);
             var bodySection = td.GetSectionData(SectionType.Body);
 
-            var separator = format == "tsv" ? "\t" : ",";
-            var lines = new List<string>();
-            var columnCount = bodySection.NumberOfColumns;
-
-            if (includeHeaders && columnCount > 0)
-            {
-                var headers = new List<string>();
-                for (int col = 0; col < columnCount; col++)
-                {
-                    try { headers.Add(EscapeCsvField(targetSchedule.GetCellText(SectionType.Body, 0, col), separator)); }
-                    catch { headers.Add(""); }
-                }
-                lines.Add(string.Join(separator, headers));
-            }
-
-            var startRow = includeHeaders ? 1 : 0;
-            for (int row = startRow; row < bodySection.NumberOfRows; row++)
-            {
-                var cells = new List<string>();
-                for (int col = 0; col < columnCount; col++)
-                {
-                    try { cells.Add(EscapeCsvField(targetSchedule.GetCellText(SectionType.Body, row, col), separator)); }
-                    catch { cells.Add(""); }
-                }
-
-                var line = string.Join(separator, cells);
-                if (!string.IsNullOrWhiteSpace(filterText) &&
-                    !line.Contains(filterText, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                lines.Add(line);
-            }
-
-            var ext = format == "tsv" ? ".tsv" : ".csv";
-            var fileName = SanitizeFileName(targetSchedule.Name) + ext;
-            var folder = System.IO.Path.GetDirectoryName(document.PathName);
-            if (string.IsNullOrEmpty(folder))
-                folder = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
-
-            var filePath = System.IO.Path.Combine(folder, fileName);
-            System.IO.File.WriteAllLines(filePath, lines);
-
-            return new
+            return (object)new
             {
                 action = "export",
                 scheduleName = targetSchedule.Name,
-                rowCount = lines.Count - (includeHeaders ? 1 : 0),
-                columnCount,
+                rowCount = bodySection.NumberOfRows - (includeHeaders ? 1 : 0),
+                columnCount = bodySection.NumberOfColumns,
                 format,
-                filePath,
-                preview = lines.Take(6).ToList()
+                filePath
             };
         });
 
         return SkillResult.Ok("Schedule export completed.", result);
+    }
+
+    private static string ExportSingleSchedule(
+        ViewSchedule vs, string format, bool includeHeaders, string? filterText, string folder)
+    {
+        var separator = format == "tsv" ? "\t" : ",";
+        var td = vs.GetTableData();
+        var bodySection = td.GetSectionData(SectionType.Body);
+        var columnCount = bodySection.NumberOfColumns;
+        var lines = new List<string>();
+
+        if (includeHeaders && columnCount > 0)
+        {
+            var headers = new List<string>();
+            for (int col = 0; col < columnCount; col++)
+            {
+                try { headers.Add(EscapeCsvField(vs.GetCellText(SectionType.Body, 0, col), separator)); }
+                catch { headers.Add(""); }
+            }
+            lines.Add(string.Join(separator, headers));
+        }
+
+        var startRow = includeHeaders ? 1 : 0;
+        for (int row = startRow; row < bodySection.NumberOfRows; row++)
+        {
+            var cells = new List<string>();
+            for (int col = 0; col < columnCount; col++)
+            {
+                try { cells.Add(EscapeCsvField(vs.GetCellText(SectionType.Body, row, col), separator)); }
+                catch { cells.Add(""); }
+            }
+
+            var line = string.Join(separator, cells);
+            if (!string.IsNullOrWhiteSpace(filterText) &&
+                !line.Contains(filterText, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            lines.Add(line);
+        }
+
+        var ext = format == "tsv" ? ".tsv" : ".csv";
+        var fileName = SanitizeFileName(vs.Name) + ext;
+        var filePath = System.IO.Path.Combine(folder, fileName);
+        System.IO.File.WriteAllLines(filePath, lines);
+        return filePath;
     }
 
     private static string EscapeCsvField(string field, string separator)

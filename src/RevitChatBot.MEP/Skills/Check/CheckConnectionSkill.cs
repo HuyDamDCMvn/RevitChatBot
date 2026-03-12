@@ -7,13 +7,16 @@ using RevitChatBot.RevitServices;
 
 namespace RevitChatBot.MEP.Skills.Check;
 
+[Skill("check_disconnected_mep",
+    "Check disconnected MEP elements. Iterates ducts, pipes, flex ducts, flex pipes, fittings, " +
+    "accessories, equipment, and terminals. Returns list of elements with unconnected connectors.")]
+[SkillParameter("level", "string",
+    "Optional level filter (partial match). Only check elements on this level.",
+    isRequired: false)]
 [SkillParameter("scope", "string",
     "Scope: 'active_view' to check only elements visible in the current view, " +
     "'entire_model' to check all (default: entire_model)",
     isRequired: false, allowedValues: new[] { "active_view", "entire_model" })]
-[Skill("check_disconnected_mep",
-    "Check disconnected MEP elements. Iterates ducts, pipes, flex ducts, flex pipes, fittings, " +
-    "accessories, equipment, and terminals. Returns list of elements with unconnected connectors.")]
 public class CheckConnectionSkill : ISkill
 {
     private static readonly (string Label, BuiltInCategory Cat)[] MepCategories =
@@ -40,6 +43,7 @@ public class CheckConnectionSkill : ISkill
             return SkillResult.Fail("Revit API not available.");
 
         var scope = ViewScopeHelper.ParseScope(parameters, ViewScopeHelper.EntireModel);
+        var levelFilter = parameters.GetValueOrDefault("level")?.ToString();
 
         var result = await context.RevitApiInvoker(doc =>
         {
@@ -49,6 +53,17 @@ public class CheckConnectionSkill : ISkill
             foreach (var (label, category) in MepCategories)
             {
                 var elements = ViewScopeHelper.CreateCollector(document, scope).OfCategory(category).WhereElementIsNotElementType().ToList();
+
+                if (!string.IsNullOrWhiteSpace(levelFilter))
+                {
+                    elements = elements.Where(e =>
+                    {
+                        var lvlId = e.get_Parameter(BuiltInParameter.RBS_START_LEVEL_PARAM)?.AsElementId() ?? e.LevelId;
+                        if (lvlId is null || lvlId == ElementId.InvalidElementId) return false;
+                        var lvlName = document.GetElement(lvlId)?.Name ?? "";
+                        return lvlName.Contains(levelFilter, StringComparison.OrdinalIgnoreCase);
+                    }).ToList();
+                }
 
                 foreach (var elem in elements)
                 {

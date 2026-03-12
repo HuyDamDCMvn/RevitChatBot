@@ -4,12 +4,15 @@ using RevitChatBot.Core.Skills;
 namespace RevitChatBot.MEP.Skills.Modify;
 
 [Skill("workset_reassign",
-    "Move elements to a different workset. Supports filtering by category and level, " +
-    "or specifying explicit element IDs. Useful for organizing elements into correct worksets " +
-    "after import, copy-paste, or team coordination.")]
+    "Move elements to a different workset, or audit workset assignments. " +
+    "Use action='audit' to get a breakdown of which elements are on which workset " +
+    "(helps find misplaced elements). Use action='move' (default) to reassign.")]
+[SkillParameter("action", "string",
+    "'move' to reassign elements (default), 'audit' to report element counts per workset per category.",
+    isRequired: false, allowedValues: new[] { "move", "audit" })]
 [SkillParameter("target_workset", "string",
-    "Target workset name (partial match supported). Required.",
-    isRequired: true)]
+    "Target workset name (partial match). Required for action='move'. Ignored for 'audit'.",
+    isRequired: false)]
 [SkillParameter("element_ids", "string",
     "Comma-separated element IDs to reassign. Optional — use category/level filter instead.",
     isRequired: false)]
@@ -46,9 +49,14 @@ public class WorksetReassignSkill : ISkill
         if (context.RevitApiInvoker is null)
             return SkillResult.Fail("Revit API not available.");
 
+        var actionParam = parameters.GetValueOrDefault("action")?.ToString()?.ToLowerInvariant() ?? "move";
+
+        if (actionParam == "audit")
+            return await AuditWorksetsAsync(context);
+
         var targetWsName = parameters.GetValueOrDefault("target_workset")?.ToString();
         if (string.IsNullOrWhiteSpace(targetWsName))
-            return SkillResult.Fail("'target_workset' is required.");
+            return SkillResult.Fail("'target_workset' is required for action='move'.");
 
         var idsStr = parameters.GetValueOrDefault("element_ids")?.ToString();
         var categoryStr = parameters.GetValueOrDefault("category")?.ToString();
@@ -146,5 +154,52 @@ public class WorksetReassignSkill : ISkill
         return res.status == "ok"
             ? SkillResult.Ok(res.message, result)
             : SkillResult.Fail(res.message);
+    }
+
+    private static async Task<SkillResult> AuditWorksetsAsync(SkillContext context)
+    {
+        var result = await context.RevitApiInvoker!(doc =>
+        {
+            var document = (Document)doc;
+            if (!document.IsWorkshared)
+                return new { isWorkshared = false, worksets = Array.Empty<object>() };
+
+            var worksets = new FilteredWorksetCollector(document)
+                .OfKind(WorksetKind.UserWorkset)
+                .ToWorksets()
+                .ToList();
+
+            var allElements = new FilteredElementCollector(document)
+                .WhereElementIsNotElementType()
+                .ToElements();
+
+            var wsData = worksets.Select(ws =>
+            {
+                var elemsOnWs = allElements.Where(e => e.WorksetId == ws.Id).ToList();
+                var byCat = elemsOnWs
+                    .Where(e => e.Category is not null)
+                    .GroupBy(e => e.Category!.Name)
+                    .Select(g => new { category = g.Key, count = g.Count() })
+                    .OrderByDescending(x => x.count)
+                    .Take(10)
+                    .ToList();
+
+                return new
+                {
+                    worksetName = ws.Name,
+                    worksetId = ws.Id.IntegerValue,
+                    isOpen = ws.IsOpen,
+                    owner = ws.Owner,
+                    elementCount = elemsOnWs.Count,
+                    topCategories = byCat
+                };
+            })
+            .OrderByDescending(w => w.elementCount)
+            .ToList();
+
+            return new { isWorkshared = true, worksets = wsData.Cast<object>().ToArray() };
+        });
+
+        return SkillResult.Ok("Workset audit completed.", result);
     }
 }

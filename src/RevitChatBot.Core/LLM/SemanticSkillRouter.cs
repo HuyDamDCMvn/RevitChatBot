@@ -268,6 +268,22 @@ public class SemanticSkillRouter
         "scope box", "vùng nhìn", "assign scope box", "gán scope box"
     };
 
+    private static readonly HashSet<string> OverviewKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "tóm tắt", "tổng quan", "overview", "summary", "model có gì", "xem model"
+    };
+
+    private static readonly HashSet<string> LinkKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "link", "linked model", "linked file", "revit link", "liên kết", "model liên kết"
+    };
+
+    private static readonly HashSet<string> VagueCheckKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "vấn đề", "bị sai", "ổn không", "check model", "có lỗi", "lỗi gì",
+        "audit", "health check", "issue", "problem"
+    };
+
     private static List<SkillDescriptor> KeywordRoute(
         string query,
         QueryAnalysis? analysis,
@@ -305,6 +321,9 @@ public class SemanticSkillRouter
         var hasRevCloudIntent = RevCloudKeywords.Any(k => queryLower.Contains(k.ToLowerInvariant()));
         var hasTextNoteIntent = TextNoteKeywords.Any(k => queryLower.Contains(k.ToLowerInvariant()));
         var hasScopeBoxIntent = ScopeBoxKeywords.Any(k => queryLower.Contains(k.ToLowerInvariant()));
+        var hasOverviewIntent = OverviewKeywords.Any(k => queryLower.Contains(k.ToLowerInvariant()));
+        var hasLinkIntent = LinkKeywords.Any(k => queryLower.Contains(k.ToLowerInvariant()));
+        var hasVagueCheckIntent = VagueCheckKeywords.Any(k => queryLower.Contains(k.ToLowerInvariant()));
 
         var scored = allSkills.Select(s =>
         {
@@ -504,6 +523,25 @@ public class SemanticSkillRouter
             {
                 if (name == "manage_scope_box")
                     score += 3.0;
+            }
+
+            if (hasOverviewIntent)
+            {
+                if (name == "mep_system_overview") score += 3.0;
+                if (name == "model_health_check") score += 2.0;
+                if (name == "model_audit") score += 1.5;
+            }
+
+            if (hasLinkIntent)
+            {
+                if (name == "link_model_analysis") score += 3.0;
+            }
+
+            if (hasVagueCheckIntent)
+            {
+                if (name == "model_audit") score += 3.0;
+                if (name == "model_health_check") score += 2.0;
+                if (name == "check_disconnected_mep") score += 1.0;
             }
 
             if (name == "execute_revit_code") score += 0.5;

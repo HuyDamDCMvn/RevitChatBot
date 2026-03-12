@@ -167,6 +167,30 @@ public static class FewShotIntentLibrary
         new("gán scope box Zone A cho view plan tầng 2", "modify", null, "manage_scope_box",
             "action=\"assign\", scope_box_name=\"Zone A\", view_name_pattern=\"Level 2\""),
         new("liệt kê scope box", "query", null, "manage_scope_box", "action=\"list\""),
+
+        // === Lazy-user / vague / overview prompts ===
+        new("tóm tắt model cho tôi", "query", null, "mep_system_overview", "discipline=\"all\""),
+        new("cho tôi xem tổng quan model", "query", null, "mep_system_overview", "discipline=\"all\""),
+        new("model nặng không?", "check", null, "model_health_check", ""),
+        new("có bao nhiêu view trong project", "check", null, "model_health_check", ""),
+        new("model có link gì không", "check", null, "link_model_analysis", ""),
+        new("tổng hợp element theo level", "report", null, "aggregate_report", "category=\"all_mep\", group_by=\"Level\""),
+        new("thống kê theo type", "report", null, "aggregate_report", "category=\"all_mep\", group_by=\"Type\""),
+        new("thống kê theo system name", "report", null, "aggregate_report", "category=\"all_mep\", group_by=\"System Name\""),
+        new("check model", "check", null, "model_audit", ""),
+        new("có vấn đề gì không", "check", null, "model_audit", ""),
+        new("element này là gì", "query", null, "inspect_element", "source=\"selected\""),
+        new("tìm cái bị sai", "check", null, "model_audit", ""),
+        new("check clash", "check", null, "clash_detection", "category_a=\"all_mep\""),
+        new("check velocity", "check", null, "check_mep_velocity", "category=\"all\""),
+        new("tag hết element chưa có tag", "modify", null, "place_tags", "category=\"all_mep\""),
+        new("export tất cả schedule ra excel", "export", null, "export_schedule_data", "action=\"export\", schedule_name=\"all\", format=\"csv\""),
+        new("so sánh element giữa tầng 1 và tầng 2", "report", null, "(multi-step)",
+            "Run: aggregate_report(all_mep, level=Level 1) + aggregate_report(all_mep, level=Level 2)"),
+        new("workset đang ai own gì", "query", null, "workset_reassign", "action=\"audit\""),
+        new("có element nào nằm sai workset không", "query", null, "workset_reassign", "action=\"audit\""),
+        new("pipe tầng 2 có vấn đề gì không", "check", "pipe", "(multi-step)",
+            "Run: check_pipe_slope(level=Level 2) + check_mep_velocity(category=pipe) + check_disconnected_mep(level=Level 2)"),
     ];
 
     /// <summary>
