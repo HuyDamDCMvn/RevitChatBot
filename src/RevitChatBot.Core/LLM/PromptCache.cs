@@ -1,4 +1,5 @@
 using RevitChatBot.Core.CodeGen;
+using RevitChatBot.Core.Learning;
 
 namespace RevitChatBot.Core.LLM;
 
@@ -6,6 +7,7 @@ namespace RevitChatBot.Core.LLM;
 /// Pre-compiles and caches system prompt templates by intent.
 /// Avoids rebuilding the full ~9000 token prompt on every call.
 /// Only injects dynamic parts (context, history, few-shot examples).
+/// Auto-invalidates when learning modules update (pattern_learned, glossary_updated).
 /// </summary>
 public class PromptCache
 {
@@ -14,6 +16,7 @@ public class PromptCache
     private string? _errorFixes;
     private string? _codeExamples;
     private string? _fullStaticPrompt;
+    private int _invalidationCount;
 
     /// <summary>
     /// Initialize cache with static content. Call once on startup.
@@ -63,4 +66,20 @@ public class PromptCache
     }
 
     public bool IsInitialized => _fullStaticPrompt != null;
+    public int InvalidationCount => _invalidationCount;
+
+    /// <summary>
+    /// Subscribe to learning events that should trigger cache invalidation.
+    /// Called once during initialization.
+    /// </summary>
+    public IDisposable? SubscribeToHub(LearningModuleHub hub)
+    {
+        return hub.Subscribe(
+            [LearningEventTypes.PatternLearned, LearningEventTypes.GlossaryUpdated],
+            _ =>
+            {
+                Interlocked.Increment(ref _invalidationCount);
+                Invalidate();
+            });
+    }
 }

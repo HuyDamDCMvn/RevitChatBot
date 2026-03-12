@@ -82,6 +82,7 @@ public class WebViewBridge : IDisposable
     private SkillKnowledgeRecipeStore? _recipeStore;
     private ContextUsageTracker? _contextUsageTracker;
     private LearningModuleHub? _learningHub;
+    private SkillRegistry? _skillRegistry;
     private CodeAutoFixer? _codeAutoFixer;
     private OllamaCloudRouter? _cloudRouter;
     private CancellationTokenSource? _pullCts;
@@ -111,6 +112,7 @@ public class WebViewBridge : IDisposable
         _ollamaService = new OllamaService();
         _cloudRouter = new OllamaCloudRouter(_ollamaService);
         var skillRegistry = new SkillRegistry();
+        _skillRegistry = skillRegistry;
         var skillContext = new SkillContext
         {
             RevitDocument = _initData.Document,
@@ -954,23 +956,34 @@ public class WebViewBridge : IDisposable
         }
 
         // ═══════════════════════════════════════════════════════
-        // 12. Register PlanReplayStore + SelfEvaluator
+        // 12. Register PlanReplayStore + SelfEvaluator + Scheduler
         // ═══════════════════════════════════════════════════════
         if (_planReplayStore is not null)
             _learningHub.Register("PlanReplayStore", _planReplayStore);
         if (_selfEvaluator is not null)
+        {
             _learningHub.Register("SelfEvaluator", _selfEvaluator);
+            _selfEvaluator.SetHub(_learningHub);
+        }
         if (_selfTrainingScheduler is not null)
             _learningHub.Register("SelfTrainingScheduler", _selfTrainingScheduler);
 
+        // Wire DynamicGlossary hub for publish support
+        _dynamicGlossary?.SetHub(_learningHub);
+
         // ═══════════════════════════════════════════════════════
-        // 13. knowledge_indexed → CodeGenKnowledgeEnricher + CodeTemplateStore
+        // 13. knowledge_indexed → CodeGenKnowledgeEnricher re-warm + CodeTemplateStore re-extract
         // ═══════════════════════════════════════════════════════
-        if (_codeTemplateStore is not null)
+        if (_codeTemplateStore is not null || _codeGenKnowledgeEnricher is not null)
         {
             Track(_learningHub.Subscribe([LearningEventTypes.KnowledgeIndexed], _ =>
             {
-                // New knowledge means potential new code templates
+                try
+                {
+                    _codeGenKnowledgeEnricher?.InvalidateCache();
+                    _codeTemplateStore?.MarkStale();
+                }
+                catch { /* non-critical */ }
             }));
         }
 
@@ -988,6 +1001,95 @@ public class WebViewBridge : IDisposable
                     _recipeStore.EnrichWithCodePattern(
                         data.Query, data.Code, data.Intent, data.Category);
                 }
+                catch { /* non-critical */ }
+            }));
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 15. skill_registered / composite_discovered → SemanticSkillRouter re-index
+        // ═══════════════════════════════════════════════════════
+        if (_skillRouter is not null)
+        {
+            Track(_learningHub.Subscribe(
+                [LearningEventTypes.SkillRegistered, LearningEventTypes.CompositeDiscovered], _ =>
+            {
+                try
+                {
+                    if (_skillRegistry is not null)
+                        _ = _skillRouter.InitializeAsync(_skillRegistry.GetAllDescriptors());
+                }
+                catch { /* non-critical */ }
+            }));
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 16. plan_evaluated → cross-module quality feedback
+        // ═══════════════════════════════════════════════════════
+        if (_fewShotLearning is not null)
+        {
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanEvaluated], evt =>
+            {
+                var data = evt.GetData<PlanEvaluatedData>();
+                if (data is null || data.OverallScore < 8.0) return;
+                try
+                {
+                    foreach (var skill in data.SkillsUsed)
+                        _fewShotLearning.RecordSuccess(data.Goal, skill,
+                            new Dictionary<string, object?> { ["from_eval"] = true });
+                }
+                catch { /* non-critical */ }
+            }));
+        }
+
+        if (_recipeStore is not null)
+        {
+            Track(_learningHub.Subscribe([LearningEventTypes.PlanEvaluated], evt =>
+            {
+                var data = evt.GetData<PlanEvaluatedData>();
+                if (data is null || !data.ShouldSaveAsTemplate) return;
+                try
+                {
+                    _recipeStore.DiscoverFrequentRecipes(minUseCount: 1);
+                    _ = _recipeStore.SaveAsync(CancellationToken.None);
+                }
+                catch { /* non-critical */ }
+            }));
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 17. skill_gap_found → DynamicCodeExamplesLibrary prioritize learning
+        // ═══════════════════════════════════════════════════════
+        if (_dynamicExamplesLibrary is not null)
+        {
+            Track(_learningHub.Subscribe([LearningEventTypes.SkillGapFound], evt =>
+            {
+                var data = evt.GetData<SkillGapData>();
+                if (data is null) return;
+                try
+                {
+                    _dynamicExamplesLibrary.PrioritizeTopic(data.Topic, data.Frequency);
+                }
+                catch { /* non-critical */ }
+            }));
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 18. PromptCache auto-invalidation on learning updates
+        // ═══════════════════════════════════════════════════════
+        if (_promptCache is not null)
+        {
+            var sub = _promptCache.SubscribeToHub(_learningHub);
+            if (sub is not null) Track(sub);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 19. glossary_updated → SkillKnowledgeIndex (new terms may affect routing)
+        // ═══════════════════════════════════════════════════════
+        if (_skillKnowledgeIndex is not null)
+        {
+            Track(_learningHub.Subscribe([LearningEventTypes.GlossaryUpdated], _ =>
+            {
+                try { _skillKnowledgeIndex.RebuildIndex(); }
                 catch { /* non-critical */ }
             }));
         }

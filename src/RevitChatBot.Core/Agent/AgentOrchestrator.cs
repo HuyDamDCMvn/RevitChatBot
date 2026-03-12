@@ -1148,6 +1148,11 @@ public class AgentOrchestrator
         if (!string.IsNullOrWhiteSpace(recoveryContext))
             parts.Add(recoveryContext);
 
+        var improvementHints = _improvementStore?.GetImprovementHints(
+            analysis?.Intent ?? "unknown", 3);
+        if (!string.IsNullOrWhiteSpace(improvementHints))
+            parts.Add(improvementHints);
+
         return parts.Count > 0
             ? "--- CODEGEN SELF-LEARNING CONTEXT ---\n" + string.Join("\n\n", parts)
             : "";

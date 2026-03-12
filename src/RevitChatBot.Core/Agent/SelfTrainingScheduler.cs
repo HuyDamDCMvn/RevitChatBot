@@ -175,7 +175,6 @@ public class SelfTrainingScheduler : IDisposable
 
             if (gaps.Count > 0)
             {
-                var summary = _gapAnalyzer.GetGapSummary(gaps);
                 _logger?.LogToolExecution("self_training_gap_analysis",
                     new Dictionary<string, object?>
                     {
@@ -183,6 +182,19 @@ public class SelfTrainingScheduler : IDisposable
                         ["high_priority"] = gaps.Count(g => g.Priority == "high")
                     },
                     true, 0);
+
+                foreach (var gap in gaps.Where(g => g.Priority is "high" or "medium"))
+                {
+                    _hub?.Publish(new LearningEvent("SelfTrainingScheduler",
+                        LearningEventTypes.SkillGapFound,
+                        new SkillGapData
+                        {
+                            Topic = gap.Topic,
+                            Frequency = gap.Frequency,
+                            Priority = gap.Priority,
+                            ExampleQueries = gap.ExampleQueries
+                        }));
+                }
             }
         }
         catch { /* non-critical */ }

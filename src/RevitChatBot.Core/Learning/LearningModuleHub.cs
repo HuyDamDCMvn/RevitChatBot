@@ -166,6 +166,8 @@ public static class LearningEventTypes
     public const string CompositeDiscovered = "composite_discovered";
     public const string GlossaryUpdated = "glossary_updated";
     public const string PatternLearned = "pattern_learned";
+    public const string PlanEvaluated = "plan_evaluated";
+    public const string SkillGapFound = "skill_gap_found";
 }
 
 /// <summary>
@@ -214,6 +216,28 @@ public class SkillFailureData
     public string SkillName { get; set; } = "";
     public Dictionary<string, object?>? Arguments { get; set; }
     public string Error { get; set; } = "";
+}
+
+public class PlanEvaluatedData
+{
+    public string Goal { get; set; } = "";
+    public string? Intent { get; set; }
+    public double OverallScore { get; set; }
+    public int Completeness { get; set; }
+    public int Efficiency { get; set; }
+    public int Accuracy { get; set; }
+    public string? ImprovementSuggestion { get; set; }
+    public string? BetterSkillSequence { get; set; }
+    public bool ShouldSaveAsTemplate { get; set; }
+    public List<string> SkillsUsed { get; set; } = [];
+}
+
+public class SkillGapData
+{
+    public string Topic { get; set; } = "";
+    public int Frequency { get; set; }
+    public string Priority { get; set; } = "low";
+    public List<string> ExampleQueries { get; set; } = [];
 }
 
 /// <summary>

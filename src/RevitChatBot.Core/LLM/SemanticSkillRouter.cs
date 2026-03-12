@@ -56,6 +56,22 @@ public class SemanticSkillRouter
     }
 
     /// <summary>
+    /// Add or update embedding for a single skill (used for incremental updates
+    /// when new dynamic/composite skills are registered at runtime).
+    /// </summary>
+    public async Task AddSkillEmbeddingAsync(SkillDescriptor skill, CancellationToken ct = default)
+    {
+        if (_embeddingProvider == null || !_initialized) return;
+        try
+        {
+            var text = $"{skill.Name}: {skill.Description}";
+            var embedding = await _embeddingProvider.GetEmbeddingAsync(text, ct);
+            _skillEmbeddings[skill.Name] = embedding;
+        }
+        catch { /* non-critical — skill will use keyword fallback */ }
+    }
+
+    /// <summary>
     /// Route query to the most relevant skills. Returns filtered and ranked skills.
     /// </summary>
     public async Task<List<SkillDescriptor>> RouteAsync(

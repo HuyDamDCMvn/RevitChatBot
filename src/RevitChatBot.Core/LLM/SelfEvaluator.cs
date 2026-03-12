@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using RevitChatBot.Core.Agent;
+using RevitChatBot.Core.Learning;
 
 namespace RevitChatBot.Core.LLM;
 
@@ -7,16 +8,20 @@ namespace RevitChatBot.Core.LLM;
 /// Uses the LLM to evaluate completed plan quality.
 /// Scores completeness, efficiency, and accuracy.
 /// Generates improvement suggestions that feed into ImprovementStore.
+/// Publishes plan_evaluated events via LearningModuleHub for cross-module learning.
 /// Only runs for multi-step plans (2+ skill calls) to avoid overhead.
 /// </summary>
 public class SelfEvaluator
 {
     private readonly IOllamaService _ollama;
+    private LearningModuleHub? _hub;
 
     public SelfEvaluator(IOllamaService ollama)
     {
         _ollama = ollama;
     }
+
+    public void SetHub(LearningModuleHub hub) => _hub = hub;
 
     /// <summary>
     /// Evaluate a completed plan. Returns scores and improvement suggestions.
@@ -69,12 +74,41 @@ public class SelfEvaluator
                 numCtx: 2048,
                 cancellationToken: ct);
 
-            return ParseEvaluation(result);
+            var evaluation = ParseEvaluation(result);
+            PublishEvaluation(evaluation, plan);
+            return evaluation;
         }
         catch
         {
             return new PlanEvaluation { Completeness = 5, Efficiency = 5, Accuracy = 5 };
         }
+    }
+
+    private void PublishEvaluation(PlanEvaluation eval, AgentPlan plan)
+    {
+        try
+        {
+            var skillsUsed = plan.Steps
+                .Where(s => s.Type == AgentStepType.Action && s.SkillName is not null)
+                .Select(s => s.SkillName!)
+                .ToList();
+
+            _hub?.Publish(new LearningEvent("SelfEvaluator",
+                LearningEventTypes.PlanEvaluated,
+                new PlanEvaluatedData
+                {
+                    Goal = plan.Goal,
+                    OverallScore = eval.OverallScore,
+                    Completeness = eval.Completeness,
+                    Efficiency = eval.Efficiency,
+                    Accuracy = eval.Accuracy,
+                    ImprovementSuggestion = eval.ImprovementSuggestion,
+                    BetterSkillSequence = eval.BetterSkillSequence,
+                    ShouldSaveAsTemplate = eval.ShouldSaveAsTemplate,
+                    SkillsUsed = skillsUsed
+                }));
+        }
+        catch { /* non-critical */ }
     }
 
     private static PlanEvaluation ParseEvaluation(string json)

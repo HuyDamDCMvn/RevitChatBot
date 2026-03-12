@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RevitChatBot.Core.Learning;
 
 namespace RevitChatBot.Core.LLM;
 
@@ -6,16 +7,20 @@ namespace RevitChatBot.Core.LLM;
 /// Per-project glossary that learns new terms from user interactions.
 /// Extends MepGlossary with project-specific terminology (Family names, system abbreviations).
 /// Also integrates model_inventory Family/Type names for normalization.
+/// Publishes glossary_updated events via LearningModuleHub when new terms are added.
 /// </summary>
 public class DynamicGlossary
 {
     private readonly string _filePath;
     private Dictionary<string, string> _projectTerms = new(StringComparer.OrdinalIgnoreCase);
+    private LearningModuleHub? _hub;
 
     public DynamicGlossary(string filePath)
     {
         _filePath = filePath;
     }
+
+    public void SetHub(LearningModuleHub hub) => _hub = hub;
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
@@ -45,10 +50,18 @@ public class DynamicGlossary
 
     /// <summary>
     /// Register a project-specific term mapping.
+    /// Publishes glossary_updated if the term is new.
     /// </summary>
     public void AddTerm(string term, string meaning)
     {
+        bool isNew = !_projectTerms.ContainsKey(term);
         _projectTerms[term] = meaning;
+        if (isNew)
+        {
+            _hub?.Publish(new LearningEvent("DynamicGlossary",
+                LearningEventTypes.GlossaryUpdated,
+                new { Term = term, Meaning = meaning, TotalTerms = _projectTerms.Count }));
+        }
     }
 
     /// <summary>
@@ -103,7 +116,12 @@ public class DynamicGlossary
             {
                 var category = MepGlossary.DetectCategory(assistantResponse);
                 if (category != null)
+                {
                     _projectTerms[word] = category;
+                    _hub?.Publish(new LearningEvent("DynamicGlossary",
+                        LearningEventTypes.GlossaryUpdated,
+                        new { Term = word, Meaning = category, Source = "correction" }));
+                }
             }
         }
     }
